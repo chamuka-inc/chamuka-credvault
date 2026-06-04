@@ -1,0 +1,110 @@
+[
+  {
+    "name": "google",
+    "auth_type": "oauth2",
+    "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+    "token_url": "https://oauth2.googleapis.com/token",
+    "revoke_url": "https://oauth2.googleapis.com/revoke",
+    "client_id_env": "GOOGLE_CLIENT_ID",
+    "client_secret_env": "GOOGLE_CLIENT_SECRET",
+    "default_scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+    "extra_authorize_params": [["access_type", "offline"], ["prompt", "consent"]]
+  },
+  {
+    "name": "github",
+    "auth_type": "oauth2",
+    "authorize_url": "https://github.com/login/oauth/authorize",
+    "token_url": "https://github.com/login/oauth/access_token",
+    "client_id_env": "GITHUB_CLIENT_ID",
+    "client_secret_env": "GITHUB_CLIENT_SECRET",
+    "default_scopes": ["repo", "read:user"],
+    "token_accept_json": true
+  },
+  {
+    "name": "slack",
+    "auth_type": "oauth2",
+    "authorize_url": "https://slack.com/oauth/v2/authorize",
+    "token_url": "https://slack.com/api/oauth.v2.access",
+    "client_id_env": "SLACK_CLIENT_ID",
+    "client_secret_env": "SLACK_CLIENT_SECRET",
+    "default_scopes": ["chat:write", "channels:read"],
+    "token_path": "authed_user.access_token"
+  },
+  {
+    "name": "notion",
+    "auth_type": "oauth2",
+    "authorize_url": "https://api.notion.com/v1/oauth/authorize",
+    "token_url": "https://api.notion.com/v1/oauth/token",
+    "client_id_env": "NOTION_CLIENT_ID",
+    "client_secret_env": "NOTION_CLIENT_SECRET",
+    "token_auth_style": "basic",
+    "token_accept_json": true
+  },
+  {
+    "name": "stripe",
+    "auth_type": "api_key"
+  },
+  {
+    "name": "x",
+    "auth_type": "oauth2",
+    "authorize_url": "https://twitter.com/i/oauth2/authorize",
+    "token_url": "https://api.twitter.com/2/oauth2/token",
+    "revoke_url": "https://api.twitter.com/2/oauth2/revoke",
+    "client_id_env": "X_CLIENT_ID",
+    "client_secret_env": "X_CLIENT_SECRET",
+    "default_scopes": ["tweet.read", "users.read", "offline.access"],
+    "token_auth_style": "basic",
+    "token_accept_json": true,
+    "uses_pkce": true,
+    "refresh_token_rotates": true
+  },
+  {
+    "name": "gitlab",
+    "auth_type": "oauth2",
+    "authorize_url": "https://gitlab.com/oauth/authorize",
+    "token_url": "https://gitlab.com/oauth/token",
+    "revoke_url": "https://gitlab.com/oauth/revoke",
+    "client_id_env": "GITLAB_CLIENT_ID",
+    "client_secret_env": "GITLAB_CLIENT_SECRET",
+    "default_scopes": ["read_api", "read_user"],
+    "uses_pkce": true,
+    "refresh_token_rotates": true
+  },
+  {
+    "name": "spotify",
+    "auth_type": "oauth2",
+    "authorize_url": "https://accounts.spotify.com/authorize",
+    "token_url": "https://accounts.spotify.com/api/token",
+    "client_id_env": "SPOTIFY_CLIENT_ID",
+    "client_secret_env": "SPOTIFY_CLIENT_SECRET",
+    "default_scopes": ["user-read-email", "user-read-private"],
+    "token_auth_style": "basic"
+  },
+  {
+    "name": "microsoft",
+    "auth_type": "oauth2",
+    "authorize_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+    "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+    "client_id_env": "MICROSOFT_CLIENT_ID",
+    "client_secret_env": "MICROSOFT_CLIENT_SECRET",
+    "default_scopes": ["openid", "offline_access", "User.Read"],
+    "uses_pkce": true,
+    "refresh_token_rotates": true
+  },
+  {
+    "name": "zoom",
+    "auth_type": "oauth2",
+    "authorize_url": "https://zoom.us/oauth/authorize",
+    "token_url": "https://zoom.us/oauth/token",
+    "revoke_url": "https://zoom.us/oauth/revoke",
+    "client_id_env": "ZOOM_CLIENT_ID",
+    "client_secret_env": "ZOOM_CLIENT_SECRET",
+    "default_scopes": ["user:read"],
+    "token_auth_style": "basic",
+    "refresh_token_rotates": true
+  },
+  {
+    "name": "sendgrid",
+    "auth_type": "api_key"
+  }
+]

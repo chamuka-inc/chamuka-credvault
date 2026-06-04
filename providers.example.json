@@ -1,0 +1,35 @@
+[
+  {
+    "name": "linear",
+    "auth_type": "oauth2",
+    "authorize_url": "https://linear.app/oauth/authorize",
+    "token_url": "https://api.linear.app/oauth/token",
+    "client_id_env": "LINEAR_CLIENT_ID",
+    "client_secret_env": "LINEAR_CLIENT_SECRET",
+    "default_scopes": ["read", "write"]
+  },
+  {
+    "name": "asana",
+    "auth_type": "oauth2",
+    "authorize_url": "https://app.asana.com/-/oauth_authorize",
+    "token_url": "https://app.asana.com/-/oauth_token",
+    "client_id_env": "ASANA_CLIENT_ID",
+    "client_secret_env": "ASANA_CLIENT_SECRET",
+    "default_scopes": ["default"],
+    "refresh_token_rotates": true
+  },
+  {
+    "name": "intercom",
+    "auth_type": "oauth2",
+    "authorize_url": "https://app.intercom.com/oauth",
+    "token_url": "https://api.intercom.io/auth/eagle/token",
+    "client_id_env": "INTERCOM_CLIENT_ID",
+    "client_secret_env": "INTERCOM_CLIENT_SECRET",
+    "token_accept_json": true,
+    "default_scopes": []
+  },
+  {
+    "name": "sendgrid",
+    "auth_type": "api_key"
+  }
+]

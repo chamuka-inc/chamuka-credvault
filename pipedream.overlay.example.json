@@ -1,0 +1,14 @@
+{
+  "_comment": "Per-slug OAuth endpoints for Pipedream apps the importer can't get from the repo (Pipedream brokers OAuth, so authorize_url/token_url/scopes live on their platform, not in components/). Fill from each provider's own OAuth docs, then: import-pipedream <dir> --overlay pipedream.overlay.example.json. Any ProviderSpec field is accepted here (e.g. token_path, token_auth_style).",
+  "airtable_oauth": {
+    "authorize_url": "https://airtable.com/oauth2/v1/authorize",
+    "token_url": "https://airtable.com/oauth2/v1/token",
+    "default_scopes": ["data.records:read", "schema.bases:read"],
+    "refresh_token_rotates": true
+  },
+  "hubspot": {
+    "authorize_url": "https://app.hubspot.com/oauth/authorize",
+    "token_url": "https://api.hubapi.com/oauth/v1/token",
+    "default_scopes": ["crm.objects.contacts.read"]
+  }
+}
