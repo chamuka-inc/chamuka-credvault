@@ -136,12 +136,12 @@ pub async fn revoke(
     } else if status >= 500 {
         Err(OAuthFailure::retryable(format!(
             "{} revoke returned {}",
-            spec.name, status
+            spec.id, status
         )))
     } else {
         Err(OAuthFailure::fatal(format!(
             "{} revoke returned {}",
-            spec.name, status
+            spec.id, status
         )))
     }
 }
@@ -190,7 +190,7 @@ async fn token_request(
     if status >= 500 {
         return Err(OAuthFailure::retryable(format!(
             "{} returned {}",
-            spec.name, status
+            spec.id, status
         )));
     }
 
@@ -211,14 +211,14 @@ async fn token_request(
     if status >= 400 {
         return Err(OAuthFailure::fatal(format!(
             "{} returned {}",
-            spec.name, status
+            spec.id, status
         )));
     }
 
     let access = dotted_get(&body, &spec.token_path)
         .and_then(|v| v.as_str())
         .ok_or_else(|| {
-            OAuthFailure::fatal(format!("{}: no token at {}", spec.name, spec.token_path))
+            OAuthFailure::fatal(format!("{}: no token at {}", spec.id, spec.token_path))
         })?;
 
     let refresh_token = dotted_get(&body, &spec.refresh_token_path)
@@ -244,9 +244,9 @@ async fn token_request(
 fn classify(spec: &ProviderSpec, code: &str) -> OAuthFailure {
     match code {
         "invalid_grant" | "invalid_token" | "token_revoked" => {
-            OAuthFailure::reauth(format!("{}: {}", spec.name, code))
+            OAuthFailure::reauth(format!("{}: {}", spec.id, code))
         }
-        other => OAuthFailure::fatal(format!("{}: {}", spec.name, other)),
+        other => OAuthFailure::fatal(format!("{}: {}", spec.id, other)),
     }
 }
 

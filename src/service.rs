@@ -154,7 +154,7 @@ pub async fn start_authorization(
     let now = OffsetDateTime::now_utc();
     let nonce = nonce();
     let claims = StateClaims {
-        p: spec.name.clone(),
+        p: spec.id.clone(),
         n: nonce.clone(),
         exp: now.unix_timestamp() + cfg.state_ttl_seconds,
     };
@@ -164,12 +164,7 @@ pub async fn start_authorization(
     let (pkce_challenge, enc_verifier) = if spec.uses_pkce {
         let verifier = crate::pkce::generate_verifier();
         let challenge = crate::pkce::challenge_s256(verifier.expose_secret());
-        let aad = aad_for(
-            id.tenant_id,
-            &spec.name,
-            id.external_user_id,
-            id.account_key,
-        );
+        let aad = aad_for(id.tenant_id, &spec.id, id.external_user_id, id.account_key);
         (Some(challenge), Some(keyring.encrypt(&verifier, &aad)?))
     } else {
         (None, None)
@@ -182,7 +177,7 @@ pub async fn start_authorization(
          VALUES ($1,$2,$3,$4,$5,$6,$7)",
     )
     .bind(&nonce)
-    .bind(&spec.name)
+    .bind(&spec.id)
     .bind(id.tenant_id)
     .bind(id.external_user_id)
     .bind(id.account_key)
@@ -194,7 +189,7 @@ pub async fn start_authorization(
     let authorize_url = oauth::build_authorize_url(
         spec,
         &client_id,
-        &cfg.redirect_uri(&spec.name),
+        &cfg.redirect_uri(&spec.id),
         &st,
         scopes,
         pkce_challenge.as_deref(),
@@ -216,7 +211,7 @@ pub async fn complete_authorization(
 ) -> Result<Connection, Error> {
     let now = OffsetDateTime::now_utc();
     let claims = state::verify(&cfg.state_secret, state_token, now.unix_timestamp())?;
-    if claims.p != spec.name {
+    if claims.p != spec.id {
         return Err(Error::BadState);
     }
 
@@ -235,7 +230,7 @@ pub async fn complete_authorization(
         Some(enc) => {
             let aad = aad_for(
                 &flow.tenant_id,
-                &spec.name,
+                &spec.id,
                 &flow.external_user_id,
                 &flow.account_key,
             );
@@ -250,7 +245,7 @@ pub async fn complete_authorization(
         &client_id,
         &client_secret,
         code,
-        &cfg.redirect_uri(&spec.name),
+        &cfg.redirect_uri(&spec.id),
         pkce_verifier.as_ref().map(|v| v.expose_secret().as_str()),
     )
     .await
@@ -313,7 +308,7 @@ pub async fn store_api_key(
     if !tenant_exists(pool, tenant_id).await? {
         return Err(Error::UnknownTenant);
     }
-    let aad = aad_for(tenant_id, &spec.name, external_user_id, account_key);
+    let aad = aad_for(tenant_id, &spec.id, external_user_id, account_key);
     let enc = keyring.encrypt(api_key, &aad)?;
     let id = new_id();
     let row = sqlx::query_as::<_, Connection>(&format!(
@@ -329,7 +324,7 @@ pub async fn store_api_key(
     ))
     .bind(id)
     .bind(tenant_id)
-    .bind(&spec.name)
+    .bind(&spec.id)
     .bind(external_user_id)
     .bind(account_key)
     .bind(enc)
@@ -347,7 +342,7 @@ async fn upsert_from_token(
     account_key: &str,
     result: TokenResult,
 ) -> Result<Connection, Error> {
-    let aad = aad_for(tenant_id, &spec.name, external_user_id, account_key);
+    let aad = aad_for(tenant_id, &spec.id, external_user_id, account_key);
     let enc_access = keyring.encrypt(&result.access_token, &aad)?;
     let enc_refresh = match &result.refresh_token {
         Some(rt) => Some(keyring.encrypt(rt, &aad)?),
@@ -377,7 +372,7 @@ async fn upsert_from_token(
     ))
     .bind(id)
     .bind(tenant_id)
-    .bind(&spec.name)
+    .bind(&spec.id)
     .bind(external_user_id)
     .bind(account_key)
     .bind(enc_access)
@@ -404,7 +399,7 @@ pub async fn get_access_token(
     let mut conn = lock_connection(
         &mut tx,
         id.tenant_id,
-        &spec.name,
+        &spec.id,
         id.external_user_id,
         id.account_key,
     )

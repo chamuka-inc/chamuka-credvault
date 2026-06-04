@@ -1,0 +1,14 @@
+{
+  "manifest_version": 1,
+  "id": "gitlab",
+  "version": "1.0.0",
+  "auth_type": "oauth2",
+  "authorize_url": "https://gitlab.com/oauth/authorize",
+  "token_url": "https://gitlab.com/oauth/token",
+  "revoke_url": "https://gitlab.com/oauth/revoke",
+  "client_id_env": "GITLAB_CLIENT_ID",
+  "client_secret_env": "GITLAB_CLIENT_SECRET",
+  "default_scopes": ["read_api", "read_user"],
+  "uses_pkce": true,
+  "refresh_token_rotates": true
+}

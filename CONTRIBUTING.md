@@ -70,9 +70,9 @@ them needs a very good reason and explicit discussion:
   `SELECT ... FOR UPDATE` locked path. Don't introduce a parallel one.
 - **Tenant isolation is non-negotiable.** The `tenant_id` is always derived from the API
   key server-side, never accepted from the request. No query may cross tenants.
-- **Providers are data, not code.** Add integrations by editing `catalog.json` (or
-  supplying runtime JSON), not by adding control flow. New behavior that can't be a
-  declarative field deserves scrutiny.
+- **Providers are plugins, not code.** Add integrations by dropping a `<id>.json` manifest
+  into a plugin directory (`plugins/default/` for a new default), not by adding control
+  flow. New behavior that can't be a declarative field deserves scrutiny.
 - **Tests and the README are the source of truth.** If you change behavior, change the
   tests and the docs in the same PR.
 
@@ -99,10 +99,11 @@ merge — keep the commit log meaningful.
 
 ## Adding a provider
 
-Most provider additions are a single JSON entry — see the "Adding a provider" section of
-the [README](README.md#adding-a-provider). Append to `src/providers/catalog.json`, add a
-test exercising any quirk it introduces, and run `cargo test`. No code changes should be
-necessary for a standard OAuth2 or API-key provider.
+Most provider additions are a single JSON manifest — see the "Adding a provider" section of
+the [README](README.md#adding-a-provider). Add a `<id>.json` to `plugins/default/` (for a
+new default) or any plugin directory, extend the `tests/default_plugins.rs` assertions if
+it introduces a quirk, and run `cargo test`. No code changes should be necessary for a
+standard OAuth2 or API-key provider.
 
 ## License
 

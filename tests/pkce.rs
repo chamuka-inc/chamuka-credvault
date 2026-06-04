@@ -45,7 +45,7 @@ fn challenge_is_s256_of_the_generated_verifier() {
 #[test]
 fn authorize_url_includes_challenge_only_when_requested() {
     let spec = ProviderSpec {
-        name: "x".into(),
+        id: "x".into(),
         authorize_url: "https://twitter.com/i/oauth2/authorize".into(),
         uses_pkce: true,
         ..Default::default()
@@ -69,7 +69,7 @@ async fn exchange_code_sends_verifier_to_token_endpoint() {
     });
 
     let spec = ProviderSpec {
-        name: "x".into(),
+        id: "x".into(),
         token_url: "https://api.twitter.com/2/oauth2/token".into(),
         uses_pkce: true,
         ..Default::default()
@@ -103,7 +103,7 @@ async fn revoke_posts_token_and_is_noop_without_url() {
 
     // No revoke_url -> no request made.
     let no_url = ProviderSpec {
-        name: "github".into(),
+        id: "github".into(),
         ..Default::default()
     };
     oauth::revoke(&transport, &no_url, "cid", &secret("sec"), &secret("tok"))
@@ -113,7 +113,7 @@ async fn revoke_posts_token_and_is_noop_without_url() {
 
     // With revoke_url -> request hits it.
     let with_url = ProviderSpec {
-        name: "x".into(),
+        id: "x".into(),
         revoke_url: Some("https://api.twitter.com/2/oauth2/revoke".into()),
         ..Default::default()
     };

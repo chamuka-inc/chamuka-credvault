@@ -22,16 +22,19 @@ Initial public release.
 - Generic OAuth2 engine: authorization-code exchange, refresh, and best-effort upstream
   revocation (RFC 7009), with a single `SELECT ... FOR UPDATE` locked refresh path shared
   by the just-in-time and background-worker flows.
-- **PKCE (RFC 7636, S256)** support, stateless — the verifier is derived from the signed
-  state nonce, requiring no session store or extra DB column.
+- **PKCE (RFC 7636, S256)** support — a fresh per-authorization verifier, stored encrypted
+  (identity-bound) in the single-use `oauth_flows` row and consumed once at the callback.
 - Signed, expiring OAuth `state` tokens (CSRF protection) with constant-time verification.
-- Data-driven provider catalog: bundled `catalog.json` plus runtime JSON
-  (file and/or inline), validated identically; new providers are a data edit, not code.
-- Eleven built-in providers: Google, GitHub, Slack, Notion, Stripe, X, GitLab, Spotify,
-  Microsoft, Zoom, and SendGrid — spanning POST vs HTTP Basic client auth, PKCE,
-  refresh-token rotation, nested token paths, and API-key-only models.
+- Providers as plugins: the binary embeds none. Every provider is a declarative JSON
+  manifest discovered from `VAULT_PLUGIN_DIRS` (later dirs override earlier by `id`),
+  validated at startup; adding one is a file, not code. `validate-plugins` checks a dir
+  without a database.
+- Eleven default provider plugins shipped in `plugins/default/`: Google, GitHub, Slack,
+  Notion, Stripe, X, GitLab, Spotify, Microsoft, Zoom, and SendGrid — spanning POST vs
+  HTTP Basic client auth, PKCE, refresh-token rotation, nested token paths, and
+  API-key-only models.
 - `import-pipedream` tool to convert Pipedream's open-source component catalog into a
-  loadable provider file, with an overlay mechanism for OAuth endpoints.
+  directory of plugin manifests, with an overlay mechanism for OAuth endpoints.
 - Per-tenant API keys (only the hash is stored); `tenant_id` is always derived
   server-side and never accepted from the request.
 - HTTP API (Axum) with `/healthz`, `/readyz`, provider listing, tenant provisioning,

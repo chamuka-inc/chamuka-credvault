@@ -36,14 +36,17 @@ push correctness into machine-checkable form:
   single `SELECT ... FOR UPDATE` row lock (`service::refresh_locked`). There is no second
   code path to keep consistent, so the refresh race can't be reintroduced in one place
   while being fixed in another.
-- **Providers are data, not code.** The built-in catalog is a bundled JSON document
-  (`src/providers/catalog.json`), parsed and validated like any runtime-supplied
-  provider — adding an integration is a data edit, never a new code path. Provider quirks (Google's offline
-  consent params, Slack's nested token JSON, Notion's Basic-auth token call, Stripe's
-  API-key model) are declarative fields, so they can't hide control-flow bugs. Ships with
-  eleven built-ins spanning the variations — Google, GitHub, Slack, Notion, Stripe, X,
-  GitLab, Spotify, Microsoft, Zoom, SendGrid (POST vs HTTP Basic client auth, PKCE,
-  refresh-token rotation, nested token paths, and API-key-only).
+- **Providers are plugins, not code.** There are no built-in providers in the binary.
+  Every provider is a declarative JSON manifest (a `ProviderSpec` plus `id`/`version`),
+  discovered at startup from the directories named by `VAULT_PLUGIN_DIRS` — adding an
+  integration is dropping a file in, never a new code path. The shipped defaults are simply
+  the manifests in `plugins/default`, loaded through the exact same mechanism as any
+  third-party plugin. Provider quirks (Google's offline consent params, Slack's nested
+  token JSON, Notion's Basic-auth token call, Stripe's API-key model) are declarative
+  fields, so they can't hide control-flow bugs. The default set spans the variations —
+  Google, GitHub, Slack, Notion, Stripe, X, GitLab, Spotify, Microsoft, Zoom, SendGrid
+  (POST vs HTTP Basic client auth, PKCE, refresh-token rotation, nested token paths, and
+  API-key-only).
 - **CI is the always-present reviewer.** `cargo fmt --check`, `clippy -D warnings`, the
   type-checked test suite, and a real-Postgres integration job all gate every change.
 
@@ -87,10 +90,10 @@ throughput, independently.
 | `src/crypto.rs` | Versioned AES-256-GCM keyring; `v{ver}.{b64(nonce\|ct)}`; AAD-bound. |
 | `src/state.rs` | Signed, expiring OAuth `state` (CSRF), constant-time verify. |
 | `src/models.rs` | `Connection` row, status enum, AAD derivation, `public()` projection. |
-| `src/providers/` | `ProviderSpec` + bundled `catalog.json` built-ins + runtime JSON loading. |
+| `src/providers/` | `ProviderSpec` manifest + plugin-directory discovery (`VAULT_PLUGIN_DIRS`). |
 | `src/transport.rs` | `TokenTransport` trait + reqwest impl + test double. |
 | `src/oauth.rs` | One generic authorize / code-exchange / refresh / revoke engine (PKCE-aware). |
-| `src/pkce.rs` | RFC 7636 S256: stateless verifier derived from the state nonce. |
+| `src/pkce.rs` | RFC 7636 S256: per-flow random verifier + challenge helpers. |
 | `src/service.rs` | The core: tenants, connect, the single locked refresh path, worker queries. |
 | `src/db.rs` | Backend selection (Postgres prod / SQLite tests) behind one set of SQL. |
 | `src/pipedream.rs` | Import Pipedream's app catalog into provider JSON (`import-pipedream` bin). |
@@ -176,15 +179,16 @@ the same provider.
 
 ## Adding a provider
 
-Providers are data in **one** JSON format. The built-in catalog
-(`src/providers/catalog.json`, bundled into the binary) and anything you add at runtime
-use the same shape and the same validation — there's no separate "code" path. To ship a
-new built-in, append an entry to `catalog.json`; to add one without rebuilding, supply
-it at runtime (next section). Either way:
+Providers are **plugins**: one JSON manifest per provider, in **one** format. There are no
+built-ins compiled into the binary — the shipped defaults in `plugins/default/` and
+anything you add are the same shape, the same validation, the same code path. To add a
+provider, drop a `<id>.json` manifest into a directory on `VAULT_PLUGIN_DIRS`:
 
 ```json
 {
-  "name": "linear",
+  "manifest_version": 1,
+  "id": "linear",
+  "version": "1.0.0",
   "auth_type": "oauth2",
   "authorize_url": "https://linear.app/oauth/authorize",
   "token_url": "https://api.linear.app/oauth/token",
@@ -194,9 +198,10 @@ it at runtime (next section). Either way:
 }
 ```
 
-Quirk knobs (all declarative, all defaulted, all JSON fields):
-`token_auth_style` (`"post"` body vs `"basic"`), `token_accept_json`, `token_path`
-(dotted path into a nested token JSON, e.g. Slack's `authed_user.access_token`),
+`id` is the provider key used in routes (`/v1/connect/linear/...`) and storage; `version`
+is packaging metadata surfaced by discovery. Quirk knobs (all declarative, all defaulted,
+all JSON fields): `token_auth_style` (`"post"` body vs `"basic"`), `token_accept_json`,
+`token_path` (dotted path into a nested token JSON, e.g. Slack's `authed_user.access_token`),
 `extra_authorize_params` (e.g. Google's `[["access_type","offline"],["prompt","consent"]]`),
 `refresh_token_rotates` (whether the provider issues a new refresh token on refresh),
 and `uses_pkce` (drive the flow with PKCE — see below).
@@ -206,51 +211,54 @@ and `uses_pkce` (drive the flow with PKCE — see below).
 The engine runs the authorization-code flow with **PKCE (RFC 7636, S256)** for any
 provider with `uses_pkce: true` — required by providers like X/Twitter, harmless
 defense-in-depth elsewhere. Since we're a confidential client, the `code_verifier` is
-sent *alongside* the client secret. PKCE is **stateless**: the verifier is derived from
-the signed-state nonce (`HMAC(state_secret, nonce)`), so only the public challenge
-travels in the authorize URL and the verifier is recomputed at the callback — no session
-store, no extra DB column. The built-in `x` provider exercises this end to end.
+sent *alongside* the client secret. Each authorization generates a fresh random verifier;
+only its S256 challenge travels in the authorize URL, and the verifier itself is stored
+**server-side, encrypted** (identity-bound AAD) in the single-use `oauth_flows` row keyed
+by the state nonce — then decrypted and consumed once at the callback. The default `x`
+provider plugin exercises this end to end.
 
 On disconnect, `DELETE /v1/connections/:id` **revokes the token upstream** (RFC 7009,
 best-effort) for providers that declare a `revoke_url`, then removes the local row — so a
 deleted credential is killed at the provider, not just forgotten locally.
 
-### …without recompiling
+### Discovery, overrides & validation
 
-The same providers can be supplied as JSON at runtime — built-ins are always present,
-and a JSON entry whose `name` matches one **overrides** it; new names are **added**.
-Point at a file and/or pass inline JSON; both are merged (inline wins on conflict),
-and an invalid catalog **fails fast at startup** rather than at first request:
+`VAULT_PLUGIN_DIRS` is a colon-separated list of directories (like `PATH`). Every `*.json`
+file in each is one provider manifest, and **the filename is the provider id** (`github.json`
+→ `github`); a manifest whose `id` field disagrees with its filename is rejected. **Later
+directories win by `id`**, so an operator's `github.json` cleanly overrides a shipped default
+without editing it. An unset/empty variable loads **zero** providers — the core is lean, and
+the default directory is what makes it useful. Every manifest is validated at startup (even
+one that's later shadowed), so an invalid plugin **fails fast** rather than at first request.
 
 ```bash
-VAULT_PROVIDERS_FILE=providers.example.json cargo run -- list-providers
-# or inline:
-VAULT_PROVIDERS_JSON='[{"name":"linear","auth_type":"oauth2",
-  "authorize_url":"https://linear.app/oauth/authorize",
-  "token_url":"https://api.linear.app/oauth/token",
-  "client_id_env":"LINEAR_CLIENT_ID","client_secret_env":"LINEAR_CLIENT_SECRET",
-  "default_scopes":["read"]}]' cargo run -- list-providers
+# Defaults plus your own, your dir overriding by id:
+VAULT_PLUGIN_DIRS=plugins/default:/etc/credvault/plugins cargo run -- list-providers
+
+# Validate a directory without a database (CI / pre-flight); non-zero on any bad manifest:
+VAULT_PLUGIN_DIRS=/etc/credvault/plugins cargo run -- validate-plugins
 ```
 
-The JSON shape mirrors `ProviderSpec` field-for-field (see `providers.example.json`),
-with the same defaulted quirk knobs. `auth_type` is `"oauth2"` or `"api_key"`.
-Secrets never go in JSON: `client_id_env` / `client_secret_env` name the env vars the
-credentials are read from, so the catalog stays non-secret and committable.
+A manifest mirrors `ProviderSpec` field-for-field plus `id`/`version`, with the same
+defaulted quirk knobs. `auth_type` is `"oauth2"` or `"api_key"`. Secrets never go in a
+manifest: `client_id_env` / `client_secret_env` name the env vars the credentials are read
+from, so manifests stay non-secret and committable.
 
 ### …from Pipedream's catalog
 
 `import-pipedream` turns a local clone of [Pipedream's open-source
 components](https://github.com/PipedreamHQ/pipedream/tree/master/components) into a
-provider file this vault can load. Each app is one `components/<slug>/<slug>.app.mjs`
-exporting `{ type:"app", app:"<slug>", methods }`; the importer reads the slug and
-infers the auth type from how the methods consume the credential
-(`this.$auth.oauth_access_token` → OAuth2, otherwise key-based).
+**directory of plugin manifests** this vault can load — they are ordinary plugins, with no
+special handling. Each app is one `components/<slug>/<slug>.app.mjs` exporting
+`{ type:"app", app:"<slug>", methods }`; the importer reads the slug and infers the auth
+type from how the methods consume the credential (`this.$auth.oauth_access_token` →
+OAuth2, otherwise key-based).
 
 ```bash
 git clone --depth 1 https://github.com/PipedreamHQ/pipedream
-import-pipedream pipedream/components --out providers.pipedream.json
-# -> providers.pipedream.json        directly loadable (key-based apps + completed OAuth)
-# -> providers.pipedream.todo.json   overlay skeleton: OAuth apps still missing endpoints
+import-pipedream pipedream/components --out-dir plugins/pipedream
+# -> plugins/pipedream/<id>.json   one manifest per app (key-based + completed OAuth)
+# -> plugins/pipedream.todo.json   overlay skeleton: OAuth apps still missing endpoints
 ```
 
 **Important limitation, by design on Pipedream's side:** Pipedream brokers the OAuth
@@ -262,17 +270,17 @@ handshake on its own platform, so the public components contain **no `authorize_
   `<SLUG>_CLIENT_ID/_SECRET` env names) and are written to the `*.todo.json` overlay
   skeleton until you supply endpoints.
 
-Fill the skeleton from each provider's own OAuth docs (see
-`pipedream.overlay.example.json`) and re-run to complete them:
+Fill the skeleton from each provider's own OAuth docs and re-run to complete them; then
+point `VAULT_PLUGIN_DIRS` at the output directory:
 
 ```bash
 import-pipedream pipedream/components \
-  --overlay pipedream.overlay.example.json --out providers.pipedream.json
-VAULT_PROVIDERS_FILE=providers.pipedream.json credvault list-providers
+  --overlay pipedream.overlay.json --out-dir plugins/pipedream
+VAULT_PLUGIN_DIRS=plugins/default:plugins/pipedream credvault list-providers
 ```
 
-The importer validates every emitted entry against the same rules the runtime loader
-uses, so an OAuth app never lands in the loadable file without its endpoints. (Pipedream
+The importer validates every emitted manifest against the same rules the runtime loader
+uses, so an OAuth app never lands in the output directory without its endpoints. (Pipedream
 also exposes an exact `auth_type` per app via its `/v1/connect/apps` API if you prefer an
 authoritative classification over the source-scan heuristic.)
 
@@ -291,6 +299,7 @@ All configuration is environment variables (Twelve-Factor). Full list with defau
 | `VAULT_STATE_SECRET` | **yes** | HMAC secret for signed OAuth state. No default; ≥ 32 bytes; or `*_FILE`. |
 | `VAULT_ADMIN_TOKEN` | **yes** | Bearer token for tenant creation. No default; ≥ 32 bytes; or `*_FILE`. |
 | `VAULT_PUBLIC_BASE_URL` | yes | Public origin for OAuth callbacks. |
+| `VAULT_PLUGIN_DIRS` | yes (to have any providers) | Colon-separated provider-plugin dirs; later wins by `id`. Unset = zero providers. Image defaults to `/app/plugins/default`. |
 | `VAULT_BIND_HOST` | no | Bind address (default `127.0.0.1`; set `0.0.0.0` to expose). |
 | `VAULT_ALLOW_INSECURE_HTTP` | no | `1` permits http provider endpoints + skips DB-TLS check (dev only). |
 | `<PROVIDER>_CLIENT_ID` / `_SECRET` | per provider | OAuth client creds for providers you enable. |
@@ -319,9 +328,9 @@ cargo build --release --locked
 
 Verified locally with no external services: crypto round-trip / AAD / version /
 rotation, secret redaction (Debug never leaks plaintext), signed-state issue / verify /
-tamper / expiry, provider catalog quirks, runtime JSON provider add/override, the
-Pipedream importer (slug + auth-type parsing, overlay completion), PKCE (RFC 7636 S256
-vector + stateless verifier derivation + authorize/exchange wiring), token revocation,
+tamper / expiry, default provider-plugin quirks, plugin-directory discovery / override /
+filename-id / validation, the Pipedream importer (slug + auth-type parsing, overlay
+completion), PKCE (RFC 7636 S256 vector + authorize/exchange wiring), token revocation,
 and the OAuth engine (code exchange + refresh classification) via an in-memory transport
 double.
 

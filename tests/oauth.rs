@@ -1,4 +1,6 @@
 //! The generic OAuth engine, exercised offline via a closure transport.
+mod common;
+
 use credvault::oauth;
 use credvault::providers;
 use credvault::secret::{secret, ExposeSecret};
@@ -16,6 +18,7 @@ fn expect_err<T>(r: Result<T, oauth::OAuthFailure>) -> oauth::OAuthFailure {
 
 #[tokio::test]
 async fn exchange_code_success() {
+    common::default_plugins();
     let spec = providers::get("github").unwrap();
     let t = FnTransport(|_url: &str, _form: &[(String, String)]| -> R {
         Ok((
@@ -32,6 +35,7 @@ async fn exchange_code_success() {
 
 #[tokio::test]
 async fn invalid_grant_flags_reauth() {
+    common::default_plugins();
     let spec = providers::get("google").unwrap();
     let t = FnTransport(|_url: &str, _form: &[(String, String)]| -> R {
         Ok((400, serde_json::json!({"error": "invalid_grant"})))
@@ -43,6 +47,7 @@ async fn invalid_grant_flags_reauth() {
 
 #[tokio::test]
 async fn server_error_is_retryable() {
+    common::default_plugins();
     let spec = providers::get("google").unwrap();
     let t = FnTransport(|_url: &str, _form: &[(String, String)]| -> R {
         Ok((503, serde_json::Value::Null))
@@ -53,6 +58,7 @@ async fn server_error_is_retryable() {
 
 #[tokio::test]
 async fn slack_ok_false_is_failure() {
+    common::default_plugins();
     let spec = providers::get("slack").unwrap();
     let t = FnTransport(|_url: &str, _form: &[(String, String)]| -> R {
         Ok((
@@ -68,6 +74,7 @@ async fn slack_ok_false_is_failure() {
 
 #[tokio::test]
 async fn network_failure_is_retryable() {
+    common::default_plugins();
     let spec = providers::get("google").unwrap();
     let t = FnTransport(|_url: &str, _form: &[(String, String)]| -> R {
         Err(TransportError("connection refused".into()))

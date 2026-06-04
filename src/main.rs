@@ -1,6 +1,6 @@
 //! Binary entrypoint. One image, several processes selected by argument or
-//! VAULT_PROCESS: `web`, `worker`, `migrate`, plus `gen-key` / `list-providers`
-//! (no DB) and `rotate-keys` (maintenance).
+//! VAULT_PROCESS: `web`, `worker`, `migrate`, plus `gen-key` / `list-providers` /
+//! `validate-plugins` (no DB) and `rotate-keys` (maintenance).
 
 use std::sync::Arc;
 
@@ -15,10 +15,15 @@ use credvault::{api, db, providers, service, worker, AppState};
 async fn main() -> anyhow::Result<()> {
     init_tracing();
 
-    // Load provider catalog (built-ins + any JSON from env) and validate now, so a
-    // malformed provider config fails fast at startup rather than at first request.
-    let provider_names = providers::init_from_env().context("loading providers")?;
-    tracing::info!(providers = provider_names.len(), "provider catalog loaded");
+    // Discover provider plugins from VAULT_PLUGIN_DIRS and validate now, so a malformed
+    // manifest fails fast at startup rather than at first request. There are no built-in
+    // providers: an unset/empty VAULT_PLUGIN_DIRS simply loads none.
+    let plugins = providers::init_plugins().context("loading provider plugins")?;
+    tracing::info!(
+        plugins = plugins.len(),
+        dirs = %std::env::var("VAULT_PLUGIN_DIRS").unwrap_or_default(),
+        "provider plugins loaded"
+    );
 
     let mode = std::env::args()
         .nth(1)
@@ -38,8 +43,29 @@ async fn main() -> anyhow::Result<()> {
                 } else {
                     "unconfigured"
                 };
-                println!("{:8} {:7} {}", s.name, state, s.default_scopes.join(","));
+                println!(
+                    "{:14} {:8} {:12} {}",
+                    s.id,
+                    s.version,
+                    state,
+                    s.default_scopes.join(",")
+                );
             }
+            return Ok(());
+        }
+        "validate-plugins" => {
+            // The eager init_plugins() above already validated every manifest (and would
+            // have aborted with a precise error otherwise). Reaching here means all loaded
+            // plugins are well-formed; report what was found.
+            let specs = providers::registry();
+            for s in specs {
+                let auth = match s.auth_type {
+                    providers::AuthType::OAuth2 => "oauth2",
+                    providers::AuthType::ApiKey => "api_key",
+                };
+                println!("ok  {:14} v{:8} {auth}", s.id, s.version);
+            }
+            println!("{} provider plugin(s) valid", specs.len());
             return Ok(());
         }
         "healthcheck" => {
@@ -65,7 +91,7 @@ async fn main() -> anyhow::Result<()> {
     // an invalid command fails with a usage message instead of a missing-DB error.
     if !matches!(mode.as_str(), "migrate" | "rotate-keys" | "worker" | "web") {
         anyhow::bail!(
-            "unknown process '{mode}' (use web|worker|migrate|gen-key|list-providers|rotate-keys)"
+            "unknown process '{mode}' (use web|worker|migrate|gen-key|list-providers|validate-plugins|rotate-keys)"
         );
     }
 

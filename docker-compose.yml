@@ -13,6 +13,13 @@
 # Secrets are delivered as mounted files (Docker secrets, surfaced to the app via the
 # *_FILE convention), NOT as environment variables — env is readable via `docker inspect`
 # and /proc/<pid>/environ. The `migrate` release step is given only the database URL.
+#
+# Providers are plugins. The image ships the default manifests at /app/plugins/default and
+# sets VAULT_PLUGIN_DIRS to it, so web + worker have the defaults with no config. To add or
+# override providers, mount a directory and append it (later dirs win by id), e.g. on web
+# and worker:
+#     volumes:    [ "./plugins/custom:/app/plugins/custom:ro" ]
+#     environment: { VAULT_PLUGIN_DIRS: "/app/plugins/default:/app/plugins/custom" }
 
 services:
   db:

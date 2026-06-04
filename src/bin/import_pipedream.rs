@@ -1,18 +1,22 @@
 //! `import-pipedream` — turn a local clone of Pipedream's `components/` directory into
-//! a provider catalog this vault can load.
+//! a directory of provider plugin manifests this vault can load.
 //!
 //! Usage:
-//!   import-pipedream <components-dir> [--overlay <file.json>] [--out <file.json>]
+//!   import-pipedream <components-dir> [--overlay <file.json>] [--out-dir <dir>]
 //!
 //! Outputs:
-//!   <out>            valid, directly-loadable providers (set VAULT_PROVIDERS_FILE to it)
-//!   <out>.todo.json  overlay skeleton: OAuth apps still missing endpoints, pre-keyed
+//!   <out-dir>/<id>.json   one provider plugin manifest per valid app
+//!   <out-dir>.todo.json   overlay skeleton: OAuth apps still missing endpoints, pre-keyed
+//!
+//! The output directory is an ordinary plugin directory — there is no special handling for
+//! imported providers. Add it to `VAULT_PLUGIN_DIRS` and the apps load exactly like the
+//! shipped defaults.
 //!
 //! Example:
 //!   git clone --depth 1 https://github.com/PipedreamHQ/pipedream
 //!   import-pipedream pipedream/components --overlay my-oauth-endpoints.json \
-//!     --out providers.pipedream.json
-//!   VAULT_PROVIDERS_FILE=providers.pipedream.json credvault list-providers
+//!     --out-dir plugins/pipedream
+//!   VAULT_PLUGIN_DIRS=plugins/default:plugins/pipedream credvault list-providers
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -25,7 +29,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut components_dir: Option<String> = None;
     let mut overlay_path: Option<String> = None;
-    let mut out_path = "providers.pipedream.json".to_string();
+    let mut out_dir = "plugins/pipedream".to_string();
 
     let mut it = args.iter();
     while let Some(arg) = it.next() {
@@ -34,13 +38,13 @@ fn main() -> ExitCode {
                 Some(v) => overlay_path = Some(v.clone()),
                 None => return fail("--overlay needs a path"),
             },
-            "--out" => match it.next() {
-                Some(v) => out_path = v.clone(),
-                None => return fail("--out needs a path"),
+            "--out-dir" => match it.next() {
+                Some(v) => out_dir = v.clone(),
+                None => return fail("--out-dir needs a path"),
             },
             "-h" | "--help" => {
                 eprintln!(
-                    "usage: import-pipedream <components-dir> [--overlay f.json] [--out f.json]"
+                    "usage: import-pipedream <components-dir> [--overlay f.json] [--out-dir dir]"
                 );
                 return ExitCode::SUCCESS;
             }
@@ -66,17 +70,24 @@ fn main() -> ExitCode {
         Err(e) => return fail(&format!("scanning {components_dir}: {e}")),
     };
 
-    // Write the loadable catalog.
-    let out = PathBuf::from(&out_path);
-    if let Err(e) = write_json(&out, &report.loadable_json()) {
-        return fail(&format!("writing {out_path}: {e}"));
+    // Write one manifest file per loadable app into the output plugin directory.
+    let dir = PathBuf::from(&out_dir);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        return fail(&format!("creating {out_dir}: {e}"));
+    }
+    for imported in &report.loadable {
+        let path = dir.join(format!("{}.json", imported.slug));
+        if let Err(e) = write_json(&path, &imported.value) {
+            return fail(&format!("writing {}: {e}", path.display()));
+        }
     }
 
-    // Write the overlay skeleton for OAuth apps still missing endpoints.
+    // Write the overlay skeleton for OAuth apps still missing endpoints — as a sibling of
+    // the plugin directory, never inside it (the loader would try to parse it as a manifest).
     let todo_written = if report.needs_endpoints.is_empty() {
         None
     } else {
-        let todo = out.with_extension("todo.json");
+        let todo = PathBuf::from(format!("{out_dir}.todo.json"));
         if let Err(e) = write_json(&todo, &report.overlay_skeleton()) {
             return fail(&format!("writing {}: {e}", todo.display()));
         }
@@ -97,7 +108,7 @@ fn main() -> ExitCode {
 
     eprintln!("Imported from {components_dir}:");
     eprintln!(
-        "  loadable now : {} ({key_loaded} api-key, {oauth_loaded} oauth completed) -> {out_path}",
+        "  manifests written: {} ({key_loaded} api-key, {oauth_loaded} oauth completed) -> {out_dir}/",
         report.loadable.len()
     );
     eprintln!(
@@ -139,8 +150,9 @@ fn write_json(path: &Path, value: &Value) -> std::io::Result<()> {
     restrict_perms(path)
 }
 
-/// Provider catalogs may carry client-id env names and endpoint config; write them
-/// owner-only (0600) so a generated file isn't left group/world-readable.
+/// Provider manifests may carry client-id env names and endpoint config; write them
+/// owner-only (0600) so a generated file isn't left group/world-readable — and so it
+/// passes the loader's own not-world-writable check.
 #[cfg(unix)]
 fn restrict_perms(path: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;

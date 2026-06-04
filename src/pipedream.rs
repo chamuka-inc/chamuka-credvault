@@ -16,9 +16,11 @@
 //!   names — and must be completed with endpoints from an *overlay* (a small JSON map
 //!   you maintain for the apps you actually use, or each provider's own docs).
 //!
-//! The importer emits both a directly-loadable provider file (everything that passes
-//! the runtime's own validation) and a pre-keyed overlay skeleton listing every OAuth
-//! app still missing endpoints, so completing them is fill-in-the-blanks.
+//! The importer emits a directory of provider plugin manifests — one `<id>.json` per app
+//! that passes the runtime's own validation — plus a pre-keyed overlay skeleton listing
+//! every OAuth app still missing endpoints, so completing them is fill-in-the-blanks.
+//! Imported manifests are ordinary plugins: point `VAULT_PLUGIN_DIRS` at the output
+//! directory and they load exactly like the shipped defaults, with no special handling.
 
 use std::path::Path;
 
@@ -100,14 +102,25 @@ pub fn client_env_names(slug: &str) -> (String, String) {
     (format!("{p}_CLIENT_ID"), format!("{p}_CLIENT_SECRET"))
 }
 
-/// The minimal provider JSON for a parsed app, before any overlay is applied.
+/// Version stamped on every imported manifest. Imported providers are skeletons completed
+/// from an overlay, so they start at a 0.x version an operator bumps as they verify them.
+const IMPORT_VERSION: &str = "0.1.0";
+
+/// The minimal provider manifest for a parsed app, before any overlay is applied.
 fn base_value(slug: &str, kind: AuthKind) -> Option<Value> {
     match kind {
-        AuthKind::ApiKey => Some(json!({ "name": slug, "auth_type": "api_key" })),
+        AuthKind::ApiKey => Some(json!({
+            "manifest_version": 1,
+            "id": slug,
+            "version": IMPORT_VERSION,
+            "auth_type": "api_key",
+        })),
         AuthKind::OAuth2 => {
             let (id_env, secret_env) = client_env_names(slug);
             Some(json!({
-                "name": slug,
+                "manifest_version": 1,
+                "id": slug,
+                "version": IMPORT_VERSION,
                 "auth_type": "oauth2",
                 "client_id_env": id_env,
                 "client_secret_env": secret_env,
@@ -147,11 +160,6 @@ pub struct ImportReport {
 }
 
 impl ImportReport {
-    /// The loadable specs as a JSON array, ready to be a `VAULT_PROVIDERS_FILE`.
-    pub fn loadable_json(&self) -> Value {
-        Value::Array(self.loadable.iter().map(|i| i.value.clone()).collect())
-    }
-
     /// A pre-keyed overlay skeleton for every OAuth app missing endpoints: fill the
     /// blanks and pass it back via `--overlay` to complete those providers.
     pub fn overlay_skeleton(&self) -> Value {

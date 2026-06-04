@@ -16,8 +16,6 @@ exclude = [
     ".github/",
     "docker-compose.yml",
     "*.example.json",
-    "providers.example.json",
-    "pipedream.overlay.example.json",
 ]
 
 [[bin]]

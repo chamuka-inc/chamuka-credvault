@@ -8,6 +8,8 @@
 //! Postgres integration job in CI. Everything else is identical.
 #![cfg(feature = "sqlite")]
 
+mod common;
+
 use credvault::config::Config;
 use credvault::crypto::{self, Keyring};
 use credvault::providers;
@@ -108,6 +110,7 @@ async fn memory_pool() -> sqlx::SqlitePool {
 
 #[tokio::test]
 async fn full_lifecycle_sqlite() {
+    common::default_plugins();
     std::env::set_var("GOOGLE_CLIENT_ID", "test-client");
     std::env::set_var("GOOGLE_CLIENT_SECRET", "test-secret");
 
@@ -265,8 +268,9 @@ async fn sid_conn_id(pool: &sqlx::SqlitePool, tenant_id: &str) -> String {
 
 #[tokio::test]
 async fn pkce_connect_then_disconnect_revokes_upstream() {
-    // X/Twitter is a built-in OAuth2 provider that requires PKCE and exposes a revoke
+    // X/Twitter is a default OAuth2 provider plugin that requires PKCE and exposes a revoke
     // endpoint — exercises the PKCE code path on connect and revoke-on-disconnect.
+    common::default_plugins();
     std::env::set_var("X_CLIENT_ID", "x-client");
     std::env::set_var("X_CLIENT_SECRET", "x-secret");
 

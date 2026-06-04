@@ -1,17 +1,31 @@
-//! Providers as data. The generic OAuth2 engine and the service layer are written
-//! once and parameterised entirely by a [`ProviderSpec`]. Adding an integration means
-//! appending one spec in `catalog.rs` — no flow logic changes.
+//! Providers as plugins. The generic OAuth2 engine and the service layer are written
+//! once and parameterised entirely by a [`ProviderSpec`]. There are **no built-in
+//! providers**: every provider — including the ones we ship — is a declarative manifest
+//! discovered at startup from the directories named by `VAULT_PLUGIN_DIRS`. The defaults
+//! are simply the manifests in the bundled `plugins/default` directory, loaded through the
+//! exact same path as any third-party plugin.
 //!
-//! Per-provider auth-dialect quirks are declarative knobs (token auth style, accept
-//! header, extra authorize params, dotted token path, refresh rotation), not branches.
-
-pub mod catalog;
+//! A plugin is one JSON file per provider: the [`ProviderSpec`] fields plus packaging
+//! metadata (`id`, `version`, `manifest_version`). Per-provider auth-dialect quirks are
+//! declarative knobs (token auth style, accept header, extra authorize params, dotted
+//! token path, refresh rotation), not branches — so adding an integration is a new file,
+//! never a code change.
 
 use std::sync::OnceLock;
 
 use anyhow::Context;
 
 use crate::secret::{secret, SecretString};
+
+/// Directories searched for provider plugin manifests, colon-separated like `PATH`.
+/// Unset/empty means the vault loads zero providers (a lean core); the container image
+/// sets this to the bundled default directory to be useful out of the box.
+const PLUGIN_DIRS_ENV: &str = "VAULT_PLUGIN_DIRS";
+
+/// Current envelope schema version. A manifest may declare its own `manifest_version`;
+/// anything newer than this is refused so an older binary can't silently misread a format
+/// it doesn't understand.
+const CURRENT_MANIFEST_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 pub enum AuthType {
@@ -32,9 +46,20 @@ pub enum TokenAuthStyle {
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
-#[serde(default)]
+// `default` lets a manifest omit any field; `deny_unknown_fields` makes a typo'd or stray
+// key a hard parse error rather than a silently-dropped field — important now that manifests
+// are authored by plugin authors, not just us.
+#[serde(default, deny_unknown_fields)]
 pub struct ProviderSpec {
-    pub name: String,
+    /// Envelope schema version of the manifest format itself. Defaults to 1; a value
+    /// greater than [`CURRENT_MANIFEST_VERSION`] is refused by the loader.
+    pub manifest_version: u32,
+    /// Canonical provider key — the value used in `/v1/connect/{id}` routes, the DB
+    /// `provider` column, and the AAD identity. Stable; unique across loaded plugins.
+    pub id: String,
+    /// Plugin version (semver recommended). Packaging metadata the engine ignores at
+    /// runtime; surfaced by discovery (`list-providers`, `GET /v1/providers`).
+    pub version: String,
     pub auth_type: AuthType,
     pub authorize_url: String,
     pub token_url: String,
@@ -58,7 +83,9 @@ pub struct ProviderSpec {
 impl Default for ProviderSpec {
     fn default() -> Self {
         ProviderSpec {
-            name: String::new(),
+            manifest_version: CURRENT_MANIFEST_VERSION,
+            id: String::new(),
+            version: String::new(),
             auth_type: AuthType::OAuth2,
             authorize_url: String::new(),
             token_url: String::new(),
@@ -112,106 +139,150 @@ impl ProviderSpec {
 
 static REGISTRY: OnceLock<Vec<ProviderSpec>> = OnceLock::new();
 
-/// The active provider catalog: built-ins overlaid with any runtime JSON. Lazily
-/// loaded on first use; `init_from_env` lets the binary load it eagerly at startup.
+/// The active provider registry: every plugin discovered from `VAULT_PLUGIN_DIRS`. Lazily
+/// loaded on first use; `init_plugins` lets the binary load it eagerly at startup so a bad
+/// manifest fails the process rather than the first request. On a load error here (after
+/// the eager startup check has already passed) the registry resolves empty rather than
+/// panicking a request thread.
 pub fn registry() -> &'static [ProviderSpec] {
     REGISTRY
         .get_or_init(|| {
-            load_from_env().unwrap_or_else(|e| {
-                tracing::error!(error = %e, "provider config invalid; using built-ins only");
-                catalog::build()
+            load_from_dirs().unwrap_or_else(|e| {
+                tracing::error!(error = %e, "plugin load failed; no providers available");
+                Vec::new()
             })
         })
         .as_slice()
 }
 
-pub fn get(name: &str) -> Option<&'static ProviderSpec> {
-    registry().iter().find(|s| s.name == name)
+pub fn get(id: &str) -> Option<&'static ProviderSpec> {
+    registry().iter().find(|s| s.id == id)
 }
 
-/// Parse and validate the provider catalog from the environment, failing fast on a
-/// malformed config. Returns the provider names. Safe to call once at startup.
-pub fn init_from_env() -> anyhow::Result<Vec<String>> {
-    let specs = load_from_env()?;
-    let names = specs.iter().map(|s| s.name.clone()).collect();
+/// Discover and validate every provider plugin, failing fast on a malformed manifest.
+/// Returns each loaded `(id, version)` for the startup log. Safe to call once at startup,
+/// before any `registry()`/`get()` access.
+pub fn init_plugins() -> anyhow::Result<Vec<(String, String)>> {
+    let specs = load_from_dirs()?;
+    let loaded = specs
+        .iter()
+        .map(|s| (s.id.clone(), s.version.clone()))
+        .collect();
     // If the registry was already initialised (e.g. by a prior `registry()` call in a
     // test), keep the existing value; startup calls this before any other access.
     let _ = REGISTRY.set(specs);
-    Ok(names)
+    Ok(loaded)
 }
 
-/// Built-ins first, then overlay providers from `VAULT_PROVIDERS_FILE` (a path to a
-/// JSON array) and `VAULT_PROVIDERS_JSON` (an inline JSON array). An entry whose name
-/// matches a built-in replaces it; new names are added. Result is sorted by name.
-fn load_from_env() -> anyhow::Result<Vec<ProviderSpec>> {
+/// Load all plugin manifests from the directories named by `VAULT_PLUGIN_DIRS`
+/// (colon-separated, in order). An unset/empty variable yields an empty registry.
+fn load_from_dirs() -> anyhow::Result<Vec<ProviderSpec>> {
+    let dirs = std::env::var(PLUGIN_DIRS_ENV).unwrap_or_default();
+    let list: Vec<&str> = dirs.split(':').filter(|d| !d.is_empty()).collect();
+    load_from(&list)
+}
+
+/// Load and fully validate manifests from an explicit, ordered list of plugin directories.
+/// Pure: reads no environment and touches no global state.
+///
+/// Within a directory, every `*.json` file is one provider manifest and the file's stem is
+/// its `id` (`github.json` ⇒ `github`) — a manifest whose `id` field disagrees with its
+/// filename is rejected, so the override target is never ambiguous and an `id` typo can't
+/// silently spawn a second provider. Across directories, a later directory's manifest
+/// replaces an earlier one with the same `id` (so an operator's custom dir cleanly overrides
+/// a shipped default). **Every** manifest is validated as it is read — including one that is
+/// later shadowed — so no malformed file is ever silently ignored. Result is sorted by `id`.
+pub fn load_from(dirs: &[&str]) -> anyhow::Result<Vec<ProviderSpec>> {
     use std::collections::BTreeMap;
 
-    let mut by_name: BTreeMap<String, ProviderSpec> = catalog::build()
-        .into_iter()
-        .map(|s| (s.name.clone(), s))
-        .collect();
-
-    if let Ok(path) = std::env::var("VAULT_PROVIDERS_FILE") {
-        if !path.is_empty() {
-            ensure_not_world_writable(&path)?;
-            let data = std::fs::read_to_string(&path)
-                .with_context(|| format!("reading VAULT_PROVIDERS_FILE ({path})"))?;
-            merge_json(&mut by_name, &data)
-                .with_context(|| format!("parsing VAULT_PROVIDERS_FILE ({path})"))?;
-        }
+    let mut by_id: BTreeMap<String, ProviderSpec> = BTreeMap::new();
+    for dir in dirs {
+        let in_this_dir = load_dir(dir)
+            .with_context(|| format!("loading plugin directory {dir} ({PLUGIN_DIRS_ENV})"))?;
+        // Later directories override earlier ones by id.
+        by_id.extend(in_this_dir);
     }
-    if let Ok(json) = std::env::var("VAULT_PROVIDERS_JSON") {
-        if !json.is_empty() {
-            merge_json(&mut by_name, &json).context("parsing VAULT_PROVIDERS_JSON")?;
-        }
-    }
-
-    let specs: Vec<ProviderSpec> = by_name.into_values().collect();
-    for s in &specs {
-        validate_spec(s)?;
-    }
-    Ok(specs)
+    Ok(by_id.into_values().collect())
 }
 
-fn merge_json(
-    by_name: &mut std::collections::BTreeMap<String, ProviderSpec>,
-    data: &str,
-) -> anyhow::Result<()> {
-    let incoming: Vec<ProviderSpec> = serde_json::from_str(data)?;
-    for spec in incoming {
-        by_name.insert(spec.name.clone(), spec);
+/// Read and validate one plugin directory into an `id -> spec` map. Files are processed in
+/// filename order for deterministic diagnostics. Because the filename stem *is* the `id` and
+/// filenames are unique within a directory, two manifests in one directory can never claim
+/// the same `id`.
+fn load_dir(dir: &str) -> anyhow::Result<std::collections::BTreeMap<String, ProviderSpec>> {
+    use std::collections::BTreeMap;
+
+    ensure_not_world_writable(dir)?;
+
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .with_context(|| format!("reading directory {dir}"))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "json"))
+        .collect();
+    files.sort();
+
+    let mut by_id: BTreeMap<String, ProviderSpec> = BTreeMap::new();
+    for file in files {
+        let display = file.display();
+        let path = file.to_string_lossy();
+        ensure_not_world_writable(&path)?;
+        let stem = file
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        let data = std::fs::read_to_string(&file)
+            .with_context(|| format!("reading manifest {display}"))?;
+        let spec: ProviderSpec =
+            serde_json::from_str(&data).with_context(|| format!("parsing manifest {display}"))?;
+        anyhow::ensure!(
+            spec.manifest_version <= CURRENT_MANIFEST_VERSION,
+            "manifest {display} declares manifest_version {} but this build understands at most {CURRENT_MANIFEST_VERSION}",
+            spec.manifest_version
+        );
+        // The filename is the id. This keeps override-by-id unambiguous and turns an id typo
+        // into an error instead of a silently-added duplicate provider.
+        anyhow::ensure!(
+            spec.id == stem,
+            "manifest {display} declares id '{}' but its filename implies '{stem}'; rename the file to '{}.json' (or fix the id)",
+            spec.id,
+            spec.id
+        );
+        validate_spec(&spec).with_context(|| format!("invalid manifest {display}"))?;
+        // `stem` is unique within the directory and equals the id, so this never overwrites.
+        by_id.insert(spec.id.clone(), spec);
     }
-    Ok(())
+    Ok(by_id)
 }
 
 /// Validate a single provider spec. Public so the Pipedream importer can dogfood the
 /// exact same rules the runtime loader enforces.
 pub fn validate_spec(s: &ProviderSpec) -> anyhow::Result<()> {
-    anyhow::ensure!(!s.name.trim().is_empty(), "a provider has an empty name");
+    anyhow::ensure!(!s.id.trim().is_empty(), "a provider has an empty id");
     if s.auth_type == AuthType::OAuth2 {
         anyhow::ensure!(
             !s.authorize_url.is_empty(),
             "provider '{}' (oauth2) is missing authorize_url",
-            s.name
+            s.id
         );
         anyhow::ensure!(
             !s.token_url.is_empty(),
             "provider '{}' (oauth2) is missing token_url",
-            s.name
+            s.id
         );
         anyhow::ensure!(
             !s.client_id_env.is_empty() && !s.client_secret_env.is_empty(),
             "provider '{}' (oauth2) is missing client_id_env/client_secret_env",
-            s.name
+            s.id
         );
         // Every endpoint the service will POST credentials to must be TLS and must not
         // point at an internal/metadata address (SSRF). A misconfigured or hostile
         // provider entry could otherwise exfiltrate the client secret + tokens, or pivot
         // to e.g. 169.254.169.254.
-        validate_endpoint(&s.name, "authorize_url", &s.authorize_url)?;
-        validate_endpoint(&s.name, "token_url", &s.token_url)?;
+        validate_endpoint(&s.id, "authorize_url", &s.authorize_url)?;
+        validate_endpoint(&s.id, "token_url", &s.token_url)?;
         if let Some(revoke) = s.revoke_url.as_deref().filter(|u| !u.is_empty()) {
-            validate_endpoint(&s.name, "revoke_url", revoke)?;
+            validate_endpoint(&s.id, "revoke_url", revoke)?;
         }
     }
     Ok(())
@@ -274,8 +345,8 @@ fn is_global_ip(ip: std::net::IpAddr) -> bool {
     }
 }
 
-/// Refuse to read a provider catalog file that is group- or world-writable: a writable
-/// catalog is an injection vector for hostile token/authorize endpoints.
+/// Refuse to read a plugin manifest file (or directory) that is group- or world-writable:
+/// a writable plugin path is an injection vector for hostile token/authorize endpoints.
 #[cfg(unix)]
 fn ensure_not_world_writable(path: &str) -> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -285,7 +356,7 @@ fn ensure_not_world_writable(path: &str) -> anyhow::Result<()> {
         .mode();
     anyhow::ensure!(
         mode & 0o022 == 0,
-        "provider file {path} is group/world-writable (mode {:o}); tighten to 0600/0640",
+        "plugin path {path} is group/world-writable (mode {:o}); tighten to 0600/0640 (dirs 0700/0750)",
         mode & 0o777
     );
     Ok(())
@@ -311,7 +382,7 @@ mod tests {
 
     fn oauth_spec(authorize: &str, token: &str) -> ProviderSpec {
         ProviderSpec {
-            name: "t".into(),
+            id: "t".into(),
             auth_type: AuthType::OAuth2,
             authorize_url: authorize.into(),
             token_url: token.into(),

@@ -3,6 +3,8 @@
 //! and the API-key path end to end.
 #![cfg(not(feature = "sqlite"))]
 
+mod common;
+
 use credvault::config::Config;
 use credvault::crypto::{self, Keyring};
 use credvault::providers;
@@ -39,6 +41,8 @@ async fn full_lifecycle() {
         eprintln!("SKIP full_lifecycle: DATABASE_URL not set");
         return;
     };
+
+    common::default_plugins();
 
     // OAuth client creds the engine reads from env.
     std::env::set_var("GOOGLE_CLIENT_ID", "test-client");

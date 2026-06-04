@@ -48,12 +48,16 @@ Minimum prod set: `VAULT_DATABASE_URL`, `VAULT_KEYS`, `VAULT_ACTIVE_KEY`,
 your platform's secret manager (Kubernetes Secrets, AWS Secrets Manager, Vault, etc.) as
 environment variables — not baked into the image.
 
-Optionally extend the provider catalog without rebuilding via `VAULT_PROVIDERS_FILE`
-(a path to a JSON array) and/or `VAULT_PROVIDERS_JSON` (inline JSON). Built-ins are
-always present; an entry whose `name` matches one overrides it. The catalog is parsed
-and validated at startup, so a malformed config **fails the process on deploy** rather
-than at first request. Only non-secret metadata goes in JSON — credentials are still
-read from the `*_CLIENT_ID` / `*_CLIENT_SECRET` env vars the JSON names.
+Providers are plugins discovered from `VAULT_PLUGIN_DIRS` (a colon-separated list of
+directories of `<id>.json` manifests). The binary ships **no** providers; the published
+image bundles the defaults at `/app/plugins/default` and sets `VAULT_PLUGIN_DIRS` to it. To
+add or override providers, mount a directory and append it (later dirs win by `id`), e.g.
+`VAULT_PLUGIN_DIRS=/app/plugins/default:/etc/credvault/plugins`. Manifests are parsed and
+validated at startup, so a malformed plugin **fails the process on deploy** rather than at
+first request (run `credvault validate-plugins` in CI to catch it earlier). Only non-secret
+metadata goes in a manifest — credentials are still read from the `*_CLIENT_ID` /
+`*_CLIENT_SECRET` env vars the manifest names. Keep plugin files and directories not
+group/world-writable (0600/0640 files, 0700/0750 dirs); the loader refuses writable ones.
 
 ## Hardening checklist
 

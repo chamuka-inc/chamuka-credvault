@@ -82,7 +82,8 @@ async fn list_providers() -> Json<Value> {
         .iter()
         .map(|s| {
             json!({
-                "name": s.name,
+                "id": s.id,
+                "version": s.version,
                 "auth_type": match s.auth_type {
                     providers::AuthType::OAuth2 => "oauth2",
                     providers::AuthType::ApiKey => "api_key",

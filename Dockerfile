@@ -31,10 +31,14 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=builder /app/target/release/credvault /usr/local/bin/credvault
 COPY --from=builder /app/migrations /app/migrations
+# The default provider plugins ship as files, loaded through the same mechanism as any
+# third-party plugin. The binary embeds none; this directory is what makes it useful
+# out of the box. Operators add their own by appending dirs to VAULT_PLUGIN_DIRS.
+COPY plugins/default /app/plugins/default
 
 USER vault
 EXPOSE 8000
-ENV PORT=8000 RUST_LOG=info
+ENV PORT=8000 RUST_LOG=info VAULT_PLUGIN_DIRS=/app/plugins/default
 
 # Uses the binary's own healthcheck subcommand — no curl/wget in the image.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

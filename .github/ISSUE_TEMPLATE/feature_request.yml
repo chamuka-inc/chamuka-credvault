@@ -15,7 +15,7 @@ body:
       label: Proposed solution
       description: >
         What would you like to see? For a new provider, note whether it can be expressed
-        as a declarative catalog entry (preferred) or needs new behavior.
+        as a declarative plugin manifest (preferred) or needs new behavior.
     validations:
       required: true
   - type: textarea

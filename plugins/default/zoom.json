@@ -1,0 +1,14 @@
+{
+  "manifest_version": 1,
+  "id": "zoom",
+  "version": "1.0.0",
+  "auth_type": "oauth2",
+  "authorize_url": "https://zoom.us/oauth/authorize",
+  "token_url": "https://zoom.us/oauth/token",
+  "revoke_url": "https://zoom.us/oauth/revoke",
+  "client_id_env": "ZOOM_CLIENT_ID",
+  "client_secret_env": "ZOOM_CLIENT_SECRET",
+  "default_scopes": ["user:read"],
+  "token_auth_style": "basic",
+  "refresh_token_rotates": true
+}

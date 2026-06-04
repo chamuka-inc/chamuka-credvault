@@ -1,18 +1,18 @@
-//! The built-in catalog is bundled JSON. Prove it parses, passes the same validation
-//! the runtime loader applies, and that every dialect quirk survives the round-trip —
-//! so a malformed or lossy edit to `catalog.json` fails here rather than in production.
+//! The default providers ship as plugin manifests in `plugins/default`, discovered through
+//! the same path as any third-party plugin — there are no built-ins. Prove they all parse,
+//! pass the runtime validation the loader applies, carry their packaging metadata, and keep
+//! every dialect quirk, so a malformed or lossy edit fails here rather than in production.
 
-use credvault::providers::{catalog, validate_spec, AuthType, TokenAuthStyle};
+mod common;
+
+use credvault::providers::{self, AuthType, TokenAuthStyle};
 
 #[test]
-fn bundled_catalog_parses_validates_and_keeps_quirks() {
-    let specs = catalog::build(); // parses catalog.json; panics if malformed
+fn default_plugins_parse_validate_and_keep_quirks() {
+    common::default_plugins(); // loads plugins/default into the registry (validating each)
+    let specs = providers::registry();
 
-    for s in &specs {
-        validate_spec(s).unwrap_or_else(|e| panic!("invalid built-in '{}': {e}", s.name));
-    }
-
-    let names: Vec<&str> = specs.iter().map(|s| s.name.as_str()).collect();
+    let ids: Vec<&str> = specs.iter().map(|s| s.id.as_str()).collect();
     for expected in [
         "google",
         "github",
@@ -26,12 +26,21 @@ fn bundled_catalog_parses_validates_and_keeps_quirks() {
         "zoom",
         "sendgrid",
     ] {
-        assert!(names.contains(&expected), "catalog missing '{expected}'");
+        assert!(
+            ids.contains(&expected),
+            "default plugins missing '{expected}'"
+        );
     }
 
-    let by = |n: &str| specs.iter().find(|s| s.name == n).unwrap();
+    // Every shipped plugin carries packaging metadata.
+    assert!(
+        specs.iter().all(|s| !s.version.is_empty()),
+        "a default plugin is missing its version"
+    );
 
-    // Quirks must survive JSON deserialization, not just the names.
+    let by = |n: &str| specs.iter().find(|s| s.id == n).unwrap();
+
+    // Quirks must survive the manifest round-trip, not just the ids.
     assert!(
         !by("google").extra_authorize_params.is_empty(),
         "google extra_authorize_params lost"

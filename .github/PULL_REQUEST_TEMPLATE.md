@@ -11,7 +11,7 @@
 
 - [ ] Bug fix
 - [ ] New feature
-- [ ] New / updated provider (catalog data)
+- [ ] New / updated provider (plugin manifest)
 - [ ] Documentation
 - [ ] Refactor / internal
 - [ ] Other:

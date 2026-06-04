@@ -1,0 +1,13 @@
+{
+  "manifest_version": 1,
+  "id": "google",
+  "version": "1.0.0",
+  "auth_type": "oauth2",
+  "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+  "token_url": "https://oauth2.googleapis.com/token",
+  "revoke_url": "https://oauth2.googleapis.com/revoke",
+  "client_id_env": "GOOGLE_CLIENT_ID",
+  "client_secret_env": "GOOGLE_CLIENT_SECRET",
+  "default_scopes": ["https://www.googleapis.com/auth/gmail.readonly"],
+  "extra_authorize_params": [["access_type", "offline"], ["prompt", "consent"]]
+}
