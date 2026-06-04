@@ -114,17 +114,7 @@ pub async fn revoke(
         return Ok(());
     };
     let mut form = vec![("token".to_string(), token.expose_secret().to_string())];
-    let basic = match spec.token_auth_style {
-        TokenAuthStyle::Basic => Some((client_id.to_string(), client_secret.clone())),
-        TokenAuthStyle::Post => {
-            form.push(("client_id".to_string(), client_id.to_string()));
-            form.push((
-                "client_secret".to_string(),
-                client_secret.expose_secret().to_string(),
-            ));
-            None
-        }
-    };
+    let basic = client_auth(spec, client_id, client_secret, &mut form);
     let (status, _) = transport
         .post_form(url, &form, spec.token_accept_json, basic)
         .await
@@ -170,17 +160,7 @@ async fn token_request(
     client_secret: &SecretString,
     mut form: Vec<(String, String)>,
 ) -> Result<TokenResult, OAuthFailure> {
-    let basic = match spec.token_auth_style {
-        TokenAuthStyle::Basic => Some((client_id.to_string(), client_secret.clone())),
-        TokenAuthStyle::Post => {
-            form.push(("client_id".to_string(), client_id.to_string()));
-            form.push((
-                "client_secret".to_string(),
-                client_secret.expose_secret().to_string(),
-            ));
-            None
-        }
-    };
+    let basic = client_auth(spec, client_id, client_secret, &mut form);
 
     let (status, body) = transport
         .post_form(&spec.token_url, &form, spec.token_accept_json, basic)
@@ -195,18 +175,13 @@ async fn token_request(
     }
 
     // OAuth error semantics. invalid_grant / revoked => user must reconnect.
-    // Slack signals failure via ok:false rather than HTTP status.
-    let err_code = body.get("error").and_then(|v| v.as_str());
-    let slack_failed = body.get("ok").and_then(|v| v.as_bool()) == Some(false);
-    if let Some(code) = err_code {
+    if let Some(code) = body.get("error").and_then(|v| v.as_str()) {
         return Err(classify(spec, code));
     }
-    if slack_failed {
-        let code = body
-            .get("error")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        return Err(classify(spec, code));
+    // Slack signals failure via ok:false rather than an HTTP status or an `error` field;
+    // any `error` string was already handled above, so the code here is unknown.
+    if body.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+        return Err(classify(spec, "unknown"));
     }
     if status >= 400 {
         return Err(OAuthFailure::fatal(format!(
@@ -239,6 +214,29 @@ async fn token_request(
         expires_in,
         scope,
     })
+}
+
+/// Apply the provider's client-authentication style to an outbound token-endpoint request:
+/// either hand back HTTP Basic credentials for the caller to set, or push client_id/
+/// client_secret into the form body. One copy, shared by every token-endpoint call
+/// (exchange, refresh, revoke) so the two dialects can never drift apart.
+fn client_auth(
+    spec: &ProviderSpec,
+    client_id: &str,
+    client_secret: &SecretString,
+    form: &mut Vec<(String, String)>,
+) -> Option<(String, SecretString)> {
+    match spec.token_auth_style {
+        TokenAuthStyle::Basic => Some((client_id.to_string(), client_secret.clone())),
+        TokenAuthStyle::Post => {
+            form.push(("client_id".to_string(), client_id.to_string()));
+            form.push((
+                "client_secret".to_string(),
+                client_secret.expose_secret().to_string(),
+            ));
+            None
+        }
+    }
 }
 
 fn classify(spec: &ProviderSpec, code: &str) -> OAuthFailure {

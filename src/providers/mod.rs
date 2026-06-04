@@ -36,6 +36,17 @@ pub enum AuthType {
     ApiKey,
 }
 
+impl AuthType {
+    /// The canonical wire string (matches the serde rename), shared by the discovery API
+    /// and the CLI so the spelling lives in exactly one place.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AuthType::OAuth2 => "oauth2",
+            AuthType::ApiKey => "api_key",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TokenAuthStyle {

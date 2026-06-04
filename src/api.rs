@@ -55,6 +55,9 @@ pub fn router(state: AppState) -> Router {
 }
 
 // ----------------------------- validation ----------------------------------- //
+/// The account key used when a caller doesn't name one — the common single-account case.
+const DEFAULT_ACCOUNT_KEY: &str = "default";
+
 fn validate_id(field: &str, v: &str) -> Result<(), Error> {
     if v.is_empty() || v.len() > 255 {
         return Err(Error::Validation(format!("{field} must be 1..=255 chars")));
@@ -84,10 +87,7 @@ async fn list_providers() -> Json<Value> {
             json!({
                 "id": s.id,
                 "version": s.version,
-                "auth_type": match s.auth_type {
-                    providers::AuthType::OAuth2 => "oauth2",
-                    providers::AuthType::ApiKey => "api_key",
-                },
+                "auth_type": s.auth_type.as_str(),
                 "configured": s.is_configured(),
                 "scopes": s.default_scopes,
             })
@@ -137,7 +137,7 @@ async fn connect_start(
 ) -> Result<axum::response::Response, Error> {
     let spec = spec_or_404(&provider)?;
     validate_id("external_user_id", &q.external_user_id)?;
-    let account_key = q.account_key.unwrap_or_else(|| "default".into());
+    let account_key = q.account_key.unwrap_or_else(|| DEFAULT_ACCOUNT_KEY.into());
     let auth = service::start_authorization(
         &st.pool,
         &st.keyring,
@@ -205,7 +205,7 @@ async fn connect_api_key(
     if body.api_key.is_empty() {
         return Err(Error::Validation("api_key must not be empty".into()));
     }
-    let account_key = body.account_key.unwrap_or_else(|| "default".into());
+    let account_key = body.account_key.unwrap_or_else(|| DEFAULT_ACCOUNT_KEY.into());
     let conn = service::store_api_key(
         &st.pool,
         &st.keyring,
@@ -235,7 +235,7 @@ async fn get_credentials(
 ) -> Result<Json<Value>, Error> {
     let spec = spec_or_404(&provider)?;
     validate_id("external_user_id", &q.external_user_id)?;
-    let account_key = q.account_key.unwrap_or_else(|| "default".into());
+    let account_key = q.account_key.unwrap_or_else(|| DEFAULT_ACCOUNT_KEY.into());
     let resp = service::get_access_token(
         &st.pool,
         st.transport.as_ref(),

@@ -344,10 +344,11 @@ async fn upsert_from_token(
 ) -> Result<Connection, Error> {
     let aad = aad_for(tenant_id, &spec.id, external_user_id, account_key);
     let enc_access = keyring.encrypt(&result.access_token, &aad)?;
-    let enc_refresh = match &result.refresh_token {
-        Some(rt) => Some(keyring.encrypt(rt, &aad)?),
-        None => None,
-    };
+    let enc_refresh = result
+        .refresh_token
+        .as_ref()
+        .map(|rt| keyring.encrypt(rt, &aad))
+        .transpose()?;
     let expires_at = result
         .expires_in
         .map(|s| OffsetDateTime::now_utc() + Duration::seconds(s));

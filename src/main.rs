@@ -59,11 +59,7 @@ async fn main() -> anyhow::Result<()> {
             // plugins are well-formed; report what was found.
             let specs = providers::registry();
             for s in specs {
-                let auth = match s.auth_type {
-                    providers::AuthType::OAuth2 => "oauth2",
-                    providers::AuthType::ApiKey => "api_key",
-                };
-                println!("ok  {:14} v{:8} {auth}", s.id, s.version);
+                println!("ok  {:14} v{:8} {}", s.id, s.version, s.auth_type.as_str());
             }
             println!("{} provider plugin(s) valid", specs.len());
             return Ok(());
