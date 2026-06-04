@@ -79,17 +79,28 @@ impl Default for ProviderSpec {
     }
 }
 
+/// Resolve a provider client credential from the env var named by `env_key`, or from the
+/// file named by `{env_key}_FILE` — the same `*_FILE` convention the vault uses for every
+/// other secret, so OAuth client secrets can be mounted (Docker/K8s secrets) rather than
+/// left in the process environment, where `docker inspect` / `/proc/<pid>/environ` expose
+/// them. A configured-but-unreadable `_FILE` path is treated as absent (the provider reads
+/// as not-configured) and logged, rather than panicking the request.
+fn client_cred(env_key: &str) -> Option<String> {
+    match crate::config::var_file(env_key) {
+        Ok(value) => value,
+        Err(e) => {
+            tracing::warn!(error = %e, env_key, "could not read provider credential file");
+            None
+        }
+    }
+}
+
 impl ProviderSpec {
     pub fn client_id(&self) -> Option<String> {
-        std::env::var(&self.client_id_env)
-            .ok()
-            .filter(|v| !v.is_empty())
+        client_cred(&self.client_id_env)
     }
     pub fn client_secret(&self) -> Option<SecretString> {
-        std::env::var(&self.client_secret_env)
-            .ok()
-            .filter(|v| !v.is_empty())
-            .map(secret)
+        client_cred(&self.client_secret_env).map(secret)
     }
     pub fn is_configured(&self) -> bool {
         match self.auth_type {
@@ -358,5 +369,54 @@ mod tests {
         );
         s.revoke_url = Some("http://169.254.169.254/kill".into());
         assert!(validate_spec(&s).is_err());
+    }
+
+    /// OAuth client secrets must honor the `*_FILE` convention used by every other secret,
+    /// so they can be mounted (Docker/K8s secret) instead of sitting in the environment.
+    #[test]
+    fn client_secret_honors_file_mount_convention() {
+        use crate::secret::ExposeSecret;
+
+        // A uniquely-named var so this test can't collide with others sharing the process.
+        const KEY: &str = "CREDVAULT_TEST_CLIENT_SECRET";
+        let file_key = format!("{KEY}_FILE");
+        let expose = |s: Option<SecretString>| s.map(|v| v.expose_secret().to_string());
+
+        let path = std::env::temp_dir().join(format!("credvault_cred_{}.txt", std::process::id()));
+        // File holds the secret with surrounding whitespace to prove it is trimmed.
+        std::fs::write(&path, "  file-mounted-secret\n").unwrap();
+
+        let mut spec = oauth_spec("https://idp.example.com/a", "https://idp.example.com/t");
+        spec.client_secret_env = KEY.into();
+
+        // Baseline: neither the env var nor the *_FILE var is set -> not configured.
+        std::env::remove_var(KEY);
+        std::env::remove_var(&file_key);
+        assert!(spec.client_secret().is_none());
+        assert!(!spec.is_configured()); // client_id also unset
+
+        // The *_FILE mount supplies the value, trimmed.
+        std::env::set_var(&file_key, &path);
+        assert_eq!(
+            expose(spec.client_secret()),
+            Some("file-mounted-secret".into())
+        );
+
+        // When both are present the mounted file wins (env must not override a mounted secret).
+        std::env::set_var(KEY, "plain-env-secret");
+        assert_eq!(
+            expose(spec.client_secret()),
+            Some("file-mounted-secret".into())
+        );
+
+        // Without the *_FILE var, it falls back to the plain env var (unchanged behavior).
+        std::env::remove_var(&file_key);
+        assert_eq!(
+            expose(spec.client_secret()),
+            Some("plain-env-secret".into())
+        );
+
+        std::env::remove_var(KEY);
+        let _ = std::fs::remove_file(&path);
     }
 }

@@ -50,7 +50,11 @@ fn var(key: &str) -> Option<String> {
 /// A configuration value, optionally sourced from a file via the `{key}_FILE` convention
 /// (the file's trimmed contents). The file form wins so secrets can be mounted rather than
 /// exported into the environment, where `docker inspect` / `/proc/<pid>/environ` expose them.
-fn var_file(key: &str) -> anyhow::Result<Option<String>> {
+///
+/// `pub(crate)` so the single implementation of the `*_FILE` convention is shared by
+/// every secret in the vault — including per-provider OAuth client credentials
+/// (`src/providers`), not just the service-level secrets resolved here.
+pub(crate) fn var_file(key: &str) -> anyhow::Result<Option<String>> {
     if let Some(path) = var(&format!("{key}_FILE")) {
         let body = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {key}_FILE ({path})"))?;
