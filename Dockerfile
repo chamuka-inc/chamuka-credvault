@@ -6,14 +6,20 @@ WORKDIR /app
 
 # Cache dependencies separately from source for fast incremental image builds.
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo 'fn main() {}' > src/main.rs && echo '' > src/lib.rs \
+# Stub every target declared in Cargo.toml — Cargo requires each [[bin]]/[lib]
+# path to exist, including the `import-pipedream` helper binary.
+RUN mkdir -p src/bin \
+ && echo 'fn main() {}' > src/main.rs \
+ && echo '' > src/lib.rs \
+ && echo 'fn main() {}' > src/bin/import_pipedream.rs \
  && cargo build --release --locked --quiet \
  && rm -rf src
 
 COPY src ./src
 COPY migrations ./migrations
-# Bust the cached lib/bin fingerprint, then build the real binary.
-RUN touch src/main.rs src/lib.rs && cargo build --release --locked --quiet
+# Bust the cached lib/bin fingerprints, then build the real binaries.
+RUN touch src/main.rs src/lib.rs src/bin/import_pipedream.rs \
+ && cargo build --release --locked --quiet
 
 # ─── Runtime stage ────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f2068983107a6f6c21eeb AS runtime
