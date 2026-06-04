@@ -92,6 +92,10 @@ jobs:
   docker:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push image + attestations to GHCR
+      security-events: write # upload the Trivy SARIF to the Security tab
     steps:
       - uses: actions/checkout@v4
       - name: container metadata
@@ -106,13 +110,46 @@ jobs:
             type=raw,value=latest
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
+
+      # Build a single-arch image into the local daemon first, so it can be scanned
+      # BEFORE anything is pushed. The layers are cached and reused by the multi-arch
+      # push below, so this is not a wasted build.
+      - name: build for scan (amd64, local)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: credvault:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Gate: fail the release on any fixable HIGH/CRITICAL vulnerability. Findings are
+      # also uploaded to the Security tab regardless of pass/fail.
+      - name: scan image (Trivy, SARIF)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: credvault:scan
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          vuln-type: os,library
+      - name: upload scan results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-image
+
       - name: log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: build and push (amd64 + arm64)
+      - name: build and push (amd64 + arm64) with SBOM + provenance
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -122,6 +159,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          sbom: true
+          provenance: mode=max
 
   # Create the GitHub Release with notes lifted from CHANGELOG.md, then let each
   # binary job upload its archive to it.

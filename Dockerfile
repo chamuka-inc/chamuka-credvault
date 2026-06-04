@@ -1,5 +1,7 @@
 # ─── Build stage ──────────────────────────────────────────────────────────────
-FROM rust:1.96-slim-bookworm AS builder
+# Base images are pinned by digest for reproducible, tamper-evident builds; the tag is
+# kept for readability. Dependabot bumps the digest when the upstream tag moves.
+FROM rust:1.96-slim-bookworm@sha256:b5f842fac1e3b4ff718a652a8e0173b62d9403ec826ef4998880b9347db30684 AS builder
 WORKDIR /app
 
 # Cache dependencies separately from source for fast incremental image builds.
@@ -14,7 +16,7 @@ COPY migrations ./migrations
 RUN touch src/main.rs src/lib.rs && cargo build --release --locked --quiet
 
 # ─── Runtime stage ────────────────────────────────────────────────────────────
-FROM debian:bookworm-slim AS runtime
+FROM debian:bookworm-slim@sha256:0104b334637a5f19aa9c983a91b54c89887c0984081f2068983107a6f6c21eeb AS runtime
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/* \

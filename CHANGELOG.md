@@ -52,6 +52,9 @@ Initial public release.
 - Tag-triggered release pipeline: version-guard, full gate re-run, crates.io publish,
   multi-arch (amd64/arm64) container image to GHCR, and a GitHub Release with notes and
   static (musl) binaries.
+- Hardened container supply chain: base images pinned by digest, a Trivy scan gate that
+  fails the release on fixable HIGH/CRITICAL vulnerabilities (results uploaded to the
+  Security tab), and SBOM + max provenance attestations published with the image.
 - Dependabot for cargo, GitHub Actions, and Docker dependencies.
 - Multi-stage `Dockerfile` (non-root, stripped binary) and `docker-compose.yml` for local
   topology (db → migrate → web + worker).
