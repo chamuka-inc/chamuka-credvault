@@ -1,5 +1,11 @@
 # credvault
 
+[![CI](https://github.com/chamuka-inc/credvault/actions/workflows/ci.yml/badge.svg)](https://github.com/chamuka-inc/credvault/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/credvault.svg)](https://crates.io/crates/credvault)
+[![Documentation](https://docs.rs/credvault/badge.svg)](https://docs.rs/credvault)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![MSRV](https://img.shields.io/badge/rustc-1.96+-orange.svg)](https://blog.rust-lang.org/)
+
 A multi-tenant, multi-provider **credential vault** — the load-bearing layer of an
 integration platform. It stores per-end-user OAuth tokens and API keys for many
 providers, encrypts them at rest, and keeps them alive across expiry, rotation, and
@@ -23,7 +29,7 @@ push correctness into machine-checkable form:
 
 - **Secrets can't be logged.** Plaintext tokens live in `SecretString` (`src/secret.rs`).
   The type has no `Display`, and its `Debug` prints `REDACTED`. "Don't log the secret"
-  is therefore not a code-review rule an agent must remember — it's a compile/September
+  is therefore not a code-review rule an agent must remember — it's a compile-time
   behavior the type enforces. Plaintext is exposed in exactly **one** function in the
   whole crate: the credentials response handler.
 - **One refresh path.** Just-in-time fetch and the background worker both go through a
@@ -335,6 +341,20 @@ CI.
 
 ---
 
+## Contributing
+
+Contributions are welcome. The CI gates (`cargo fmt --check`, `clippy -D warnings`, the
+full test suite, and a real-Postgres integration job) run on every pull request and are
+the contract — if they pass, the change is in good shape. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and [SECURITY.md](SECURITY.md) for
+how to report a vulnerability privately.
+
+Please review the [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
+
 ## License
 
-Provided as a reference implementation.
+Licensed under the [Apache License, Version 2.0](LICENSE).
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for
+inclusion in this work by you, as defined in the Apache-2.0 license, shall be licensed as
+above, without any additional terms or conditions.

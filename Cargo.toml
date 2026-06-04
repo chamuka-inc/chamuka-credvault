@@ -4,6 +4,21 @@ version = "1.0.0"
 edition = "2021"
 rust-version = "1.96"
 description = "Multi-tenant, multi-provider credential vault — the load-bearing layer of an integration platform."
+authors = ["Chamuka, Inc. <swiftugandan@gmail.com>"]
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/chamuka-inc/credvault"
+homepage = "https://github.com/chamuka-inc/credvault"
+documentation = "https://docs.rs/credvault"
+keywords = ["oauth", "credentials", "vault", "tokens", "secrets"]
+categories = ["authentication", "cryptography", "web-programming::http-server"]
+exclude = [
+    ".github/",
+    "docker-compose.yml",
+    "*.example.json",
+    "providers.example.json",
+    "pipedream.overlay.example.json",
+]
 
 [[bin]]
 name = "credvault"

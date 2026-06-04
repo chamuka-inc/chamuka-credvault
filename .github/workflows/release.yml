@@ -1,0 +1,174 @@
+# Release pipeline. Cutting a release is a single action: push a `vX.Y.Z` tag whose
+# version matches Cargo.toml. Everything downstream is automated and gated on the same
+# checks CI runs — nothing ships that the test suite or the version guard rejects.
+#
+# Produces, for each tag:
+#   - a crates.io publish (cargo publish)
+#   - a multi-arch container image on GHCR (linux/amd64 + linux/arm64)
+#   - a GitHub Release with notes extracted from CHANGELOG.md and static binaries
+#
+# Required repository secret:
+#   CARGO_REGISTRY_TOKEN  — a crates.io API token with publish scope.
+# (GHCR uses the built-in GITHUB_TOKEN; no extra secret needed.)
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write # create the GitHub Release and upload assets
+  packages: write # push the image to GHCR
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Refuse to release if the tag and the manifest disagree. This is the one human
+  # input (the tag); guard it before anything is published anywhere.
+  verify-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: tag matches Cargo.toml version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          manifest="$(cargo metadata --no-deps --format-version 1 \
+            | python3 -c 'import sys,json; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          echo "tag=$tag manifest=$manifest"
+          if [ "$tag" != "$manifest" ]; then
+            echo "::error::Tag v$tag does not match Cargo.toml version $manifest"
+            exit 1
+          fi
+
+  # Re-run the full gate set before publishing. A release must clear exactly what a
+  # merge clears — no shortcuts because it is "just a tag".
+  test:
+    needs: verify-version
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: vault
+          POSTGRES_PASSWORD: vault
+          POSTGRES_DB: vault
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vault -d vault"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      VAULT_DATABASE_URL: postgres://vault:vault@localhost:5432/vault
+      DATABASE_URL: postgres://vault:vault@localhost:5432/vault
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --features sqlite
+      - run: cargo run --quiet -- migrate
+      - run: cargo test --all-targets
+
+  publish-crate:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo publish
+        run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: container metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: build and push (amd64 + arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Create the GitHub Release with notes lifted from CHANGELOG.md, then let each
+  # binary job upload its archive to it.
+  create-release:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: extract changelog section for this version
+        id: notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v ver="$version" '
+            $0 ~ "^## \\[" ver "\\]" {grab=1; next}
+            grab && /^## \[/ {exit}
+            grab {print}
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if [ ! -s RELEASE_NOTES.md ]; then
+            echo "See CHANGELOG.md for details." > RELEASE_NOTES.md
+          fi
+      - name: create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: credvault ${{ github.ref_name }}
+          body_path: RELEASE_NOTES.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+  binaries:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+          - target: aarch64-unknown-linux-musl
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # Cross-compiles via `cross`, archives the binaries, generates SHA-256
+      # checksums, and uploads everything to the release for this tag.
+      - name: build and upload static binaries
+        uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: credvault,import-pipedream
+          target: ${{ matrix.target }}
+          archive: credvault-$tag-$target
+          checksum: sha256
+          token: ${{ secrets.GITHUB_TOKEN }}

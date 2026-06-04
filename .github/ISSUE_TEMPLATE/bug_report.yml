@@ -1,0 +1,59 @@
+name: Bug report
+description: Report a defect in credvault (not a security vulnerability — see SECURITY.md)
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. **Do not report security
+        vulnerabilities here** — follow the private process in
+        [SECURITY.md](https://github.com/chamuka-inc/credvault/blob/main/SECURITY.md).
+
+        Never paste real tokens, API keys, or credentials into this issue.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps, requests, or config to reproduce the behavior.
+      placeholder: |
+        1. Configure provider '...'
+        2. Call endpoint '...'
+        3. See error '...'
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or output
+      description: Paste any relevant log output. Redact all secrets first.
+      render: shell
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: credvault version, tag, or commit SHA.
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Database backend
+      options:
+        - Postgres
+        - SQLite (test/dev)
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Rust version (if building from source), deployment (Docker, k8s, bare).
+    validations:
+      required: false
