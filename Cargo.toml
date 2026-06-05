@@ -20,7 +20,7 @@ homepage = "https://github.com/chamuka-inc/credvault"
 # add crate-specific features on top. One place to bump a version for the whole tree.
 [workspace.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "sync"] }
-axum = { version = "0.7", features = ["json", "query"] }
+axum = { version = "0.8", features = ["json", "query"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "timeout"] }
 sqlx = { version = "0.8", default-features = false, features = [
