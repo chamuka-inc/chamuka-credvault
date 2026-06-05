@@ -116,7 +116,7 @@ jobs:
       # BEFORE anything is pushed. The layers are cached and reused by the multi-arch
       # push below, so this is not a wasted build.
       - name: build for scan (amd64, local)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64
@@ -151,7 +151,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: build and push (amd64 + arm64) with SBOM + provenance
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
