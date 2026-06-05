@@ -183,7 +183,7 @@ jobs:
             echo "See CHANGELOG.md for details." > RELEASE_NOTES.md
           fi
       - name: create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: credvault ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md
