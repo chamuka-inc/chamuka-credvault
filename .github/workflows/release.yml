@@ -128,7 +128,7 @@ jobs:
       # Gate: fail the release on any fixable HIGH/CRITICAL vulnerability. Findings are
       # also uploaded to the Security tab regardless of pass/fail.
       - name: scan image (Trivy, SARIF)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: credvault:scan
           format: sarif
