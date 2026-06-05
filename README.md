@@ -27,7 +27,7 @@ credential vault means the worst possible bugs: a leaked token, a cross-tenant r
 refresh race. So the stack is chosen to **distrust the coder as much as possible** and
 push correctness into machine-checkable form:
 
-- **Secrets can't be logged.** Plaintext tokens live in `SecretString` (`src/secret.rs`).
+- **Secrets can't be logged.** Plaintext tokens live in `SecretString` (`src/crypto/secret.rs`).
   The type has no `Display`, and its `Debug` prints `REDACTED`. "Don't log the secret"
   is therefore not a code-review rule an agent must remember — it's a compile-time
   behavior the type enforces. Plaintext is exposed in exactly **one** function in the
@@ -82,25 +82,34 @@ re-derives behavior from types and tests, and unreliably remembers prose.
 separate one-shot release step. Scale `web` for read traffic and `worker` for refresh
 throughput, independently.
 
-### Source map
+### Workspace layout
 
-| File | Responsibility |
-|------|----------------|
-| `src/secret.rs` | `SecretString` re-exports; the no-leak guarantee. |
-| `src/crypto.rs` | Versioned AES-256-GCM keyring; `v{ver}.{b64(nonce\|ct)}`; AAD-bound. |
-| `src/state.rs` | Signed, expiring OAuth `state` (CSRF), constant-time verify. |
-| `src/models.rs` | `Connection` row, status enum, AAD derivation, `public()` projection. |
-| `src/providers/` | `ProviderSpec` manifest + plugin-directory discovery (`VAULT_PLUGIN_DIRS`). |
-| `src/transport.rs` | `TokenTransport` trait + reqwest impl + test double. |
-| `src/oauth.rs` | One generic authorize / code-exchange / refresh / revoke engine (PKCE-aware). |
-| `src/pkce.rs` | RFC 7636 S256: per-flow random verifier + challenge helpers. |
-| `src/service.rs` | The core: tenants, connect, the single locked refresh path, worker queries. |
-| `src/db.rs` | Backend selection (Postgres prod / SQLite tests) behind one set of SQL. |
-| `src/pipedream.rs` | Import Pipedream's app catalog into provider JSON (`import-pipedream` bin). |
-| `src/api.rs` | Axum router, edge validation, admin auth, the one secret exposure. |
-| `src/worker.rs` | Background refresh loop with graceful shutdown. |
-| `src/config.rs` | Twelve-factor config from env. |
-| `src/error.rs` | Typed errors → stable HTTP status + code; DB detail never leaks. |
+credvault is a Cargo workspace. The service crate holds the library and the `credvault`
+binary; the importer is a separate tool crate so it stays out of the published library's
+dependency graph and API surface. A fuller tour lives in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+```
+crates/
+  credvault/                     the library + `credvault` service binary
+    src/
+      crypto/   secret.rs        SecretString (no-leak) + versioned AES-256-GCM-SIV keyring
+      oauth/    pkce.rs          one generic authorize/exchange/refresh/revoke engine; RFC 7636 PKCE
+                pipedream.rs     offline import of Pipedream's catalog into provider manifests
+      http/     api.rs auth.rs   axum router + edge validation + the one secret exposure;
+                ratelimit.rs     API-key→tenant extractors; per-IP limiter;
+                transport.rs     the outbound TokenTransport (reqwest impl + test double)
+      service.rs                 the core: tenants, connect, the single locked refresh path
+      models.rs                  Connection row, status enum, AAD derivation, public() projection
+      state.rs                   signed, expiring OAuth `state` (CSRF), constant-time verify
+      db.rs                      backend selection (Postgres prod / SQLite tests) behind one SQL set
+      config.rs error.rs         twelve-factor config; typed errors → stable HTTP codes
+      providers/                 ProviderSpec manifest + plugin-directory discovery
+    migrations/  tests/
+  credvault-import-pipedream/    the `import-pipedream` tool binary
+plugins/default/                 the shipped provider manifests (see plugins/README.md)
+docs/                            DEPLOYMENT, ARCHITECTURE, and the docs index
+```
 
 ---
 
@@ -136,11 +145,12 @@ curl -s "localhost:8000/v1/credentials/stripe?external_user_id=user-1" \
 ## Quickstart (local binary)
 
 ```bash
-cargo run -- gen-key          # generate an encryption key (and a state secret)
-cargo run -- list-providers   # show catalog + which are configured via env
+# Run from the workspace root; -p credvault selects the service binary.
+cargo run -p credvault -- gen-key          # generate an encryption key (and a state secret)
+cargo run -p credvault -- list-providers   # show catalog + which are configured via env
 # with VAULT_DATABASE_URL pointing at Postgres:
-cargo run -- migrate
-cargo run -- web              # or: worker
+cargo run -p credvault -- migrate
+cargo run -p credvault -- web              # or: worker
 ```
 
 ---
@@ -173,7 +183,7 @@ the same provider.
 > Note on auth scope: the credential and management endpoints are unauthenticated in this
 > reference build and are meant to sit behind your platform's own service-to-service auth
 > (mTLS / gateway / network policy). Tenant creation is the one admin-gated action. See
-> DEPLOYMENT.md for hardening.
+> [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for hardening.
 
 ---
 
@@ -233,10 +243,10 @@ one that's later shadowed), so an invalid plugin **fails fast** rather than at f
 
 ```bash
 # Defaults plus your own, your dir overriding by id:
-VAULT_PLUGIN_DIRS=plugins/default:/etc/credvault/plugins cargo run -- list-providers
+VAULT_PLUGIN_DIRS=plugins/default:/etc/credvault/plugins cargo run -p credvault -- list-providers
 
 # Validate a directory without a database (CI / pre-flight); non-zero on any bad manifest:
-VAULT_PLUGIN_DIRS=/etc/credvault/plugins cargo run -- validate-plugins
+VAULT_PLUGIN_DIRS=/etc/credvault/plugins cargo run -p credvault -- validate-plugins
 ```
 
 A manifest mirrors `ProviderSpec` field-for-field plus `id`/`version`, with the same
@@ -260,6 +270,9 @@ import-pipedream pipedream/components --out-dir plugins/pipedream
 # -> plugins/pipedream/<id>.json   one manifest per app (key-based + completed OAuth)
 # -> plugins/pipedream.todo.json   overlay skeleton: OAuth apps still missing endpoints
 ```
+
+`import-pipedream` is the released binary name; from a source checkout run it with
+`cargo run -p credvault-import-pipedream -- pipedream/components --out-dir plugins/pipedream`.
 
 **Important limitation, by design on Pipedream's side:** Pipedream brokers the OAuth
 handshake on its own platform, so the public components contain **no `authorize_url`,
@@ -319,11 +332,12 @@ key. No downtime, no flag-day.
 ## Tests & what's actually verified
 
 ```bash
-cargo test                       # unit + integration (Postgres DB test auto-skips)
-cargo test --features sqlite     # adds a real, in-process DB lifecycle — no Postgres
-cargo clippy --all-targets --all-features -- -D warnings
+cargo test --workspace                     # unit + integration (Postgres DB test auto-skips)
+cargo test -p credvault --features sqlite  # adds a real, in-process DB lifecycle — no Postgres
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo fmt --check
 cargo build --release --locked
+# or simply: make ci
 ```
 
 Verified locally with no external services: crypto round-trip / AAD / version /
@@ -334,17 +348,17 @@ completion), PKCE (RFC 7636 S256 vector + authorize/exchange wiring), token revo
 and the OAuth engine (code exchange + refresh classification) via an in-memory transport
 double.
 
-`cargo test --features sqlite` additionally runs the **full database lifecycle**
-(`tests/service_sqlite.rs`) against an in-process SQLite: tenant creation, OAuth code
+`cargo test -p credvault --features sqlite` additionally runs the **full database lifecycle**
+(`crates/credvault/tests/service_sqlite.rs`) against an in-process SQLite: tenant creation, OAuth code
 exchange, encrypted upsert, the just-in-time refresh inside a transaction, cross-tenant
 isolation, the API-key path, list/delete, and a PKCE-connect + revoke-on-disconnect
 flow — **34 tests under `--features sqlite` (33 on the default build), all green, with no
 external database**. The service shares one set of SQL across both backends; only the row-lock
-clause and the "now" expression differ (see `src/db.rs`).
+clause and the "now" expression differ (see `crates/credvault/src/db.rs`).
 
 SQLite serialises writers itself, so it cannot reproduce Postgres's row-level
 `SELECT ... FOR UPDATE` concurrency semantics. That specific guarantee is covered by
-`tests/service_pg.rs`, gated on `DATABASE_URL` and run in CI against a real Postgres
+`crates/credvault/tests/service_pg.rs`, gated on `DATABASE_URL` and run in CI against a real Postgres
 service. So: SQLite proves the lifecycle logic locally; Postgres proves the locking in
 CI.
 

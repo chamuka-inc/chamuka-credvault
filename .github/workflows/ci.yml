@@ -41,7 +41,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: full lifecycle on SQLite
-        run: cargo test --features sqlite
+        run: cargo test -p credvault --features sqlite
 
   # Full lifecycle against a real Postgres. This is where the DATABASE_URL-gated
   # service_pg test actually runs: OAuth exchange, encrypted upsert, the
@@ -70,7 +70,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: apply migrations
-        run: cargo run --quiet -- migrate
+        run: cargo run -p credvault --quiet -- migrate
       - name: integration tests (with Postgres)
         run: cargo test --all-targets
 

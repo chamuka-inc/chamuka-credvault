@@ -1,0 +1,17 @@
+# Code ownership for review routing. The whole tree is owned by the core team;
+# add narrower rules below as the project grows (later rules win).
+#
+# Security-sensitive surfaces are called out so changes to them always pull in a
+# reviewer who knows the invariants documented in docs/ARCHITECTURE.md.
+
+*                                       @chamuka-inc/credvault-maintainers
+
+# Cryptography, secret handling, and the single OAuth/refresh path.
+/crates/credvault/src/crypto/           @chamuka-inc/credvault-maintainers
+/crates/credvault/src/oauth/            @chamuka-inc/credvault-maintainers
+/crates/credvault/src/service.rs        @chamuka-inc/credvault-maintainers
+
+# Supply-chain and release controls.
+/.github/                               @chamuka-inc/credvault-maintainers
+/Dockerfile                             @chamuka-inc/credvault-maintainers
+/deny.toml                              @chamuka-inc/credvault-maintainers

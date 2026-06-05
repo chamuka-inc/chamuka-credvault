@@ -13,12 +13,14 @@ on:
     branches: [main]
     paths:
       - "Cargo.toml"
+      - "crates/**/Cargo.toml"
       - "Cargo.lock"
       - "deny.toml"
       - ".github/workflows/security.yml"
   pull_request:
     paths:
       - "Cargo.toml"
+      - "crates/**/Cargo.toml"
       - "Cargo.lock"
       - "deny.toml"
       - ".github/workflows/security.yml"

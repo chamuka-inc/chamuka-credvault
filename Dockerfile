@@ -5,20 +5,24 @@ FROM rust:1.96-slim-bookworm@sha256:b5f842fac1e3b4ff718a652a8e0173b62d9403ec826e
 WORKDIR /app
 
 # Cache dependencies separately from source for fast incremental image builds.
+# Copy only the manifests first; the source arrives in a later layer.
 COPY Cargo.toml Cargo.lock ./
-# Stub every target declared in Cargo.toml — Cargo requires each [[bin]]/[lib]
-# path to exist, including the `import-pipedream` helper binary.
-RUN mkdir -p src/bin \
- && echo 'fn main() {}' > src/main.rs \
- && echo '' > src/lib.rs \
- && echo 'fn main() {}' > src/bin/import_pipedream.rs \
+COPY crates/credvault/Cargo.toml crates/credvault/Cargo.toml
+COPY crates/credvault-import-pipedream/Cargo.toml crates/credvault-import-pipedream/Cargo.toml
+# Stub every target Cargo requires (each crate's [[bin]]/[lib] path must exist) so the
+# dependency graph builds and caches with no real source present.
+RUN mkdir -p crates/credvault/src crates/credvault-import-pipedream/src \
+ && echo 'fn main() {}' > crates/credvault/src/main.rs \
+ && echo '' > crates/credvault/src/lib.rs \
+ && echo 'fn main() {}' > crates/credvault-import-pipedream/src/main.rs \
  && cargo build --release --locked --quiet \
- && rm -rf src
+ && rm -rf crates/credvault/src crates/credvault-import-pipedream/src
 
-COPY src ./src
-COPY migrations ./migrations
+# Real source (migrations live under crates/credvault/ and arrive with this copy).
+COPY crates ./crates
 # Bust the cached lib/bin fingerprints, then build the real binaries.
-RUN touch src/main.rs src/lib.rs src/bin/import_pipedream.rs \
+RUN touch crates/credvault/src/main.rs crates/credvault/src/lib.rs \
+      crates/credvault-import-pipedream/src/main.rs \
  && cargo build --release --locked --quiet
 
 # ─── Runtime stage ────────────────────────────────────────────────────────────
@@ -30,7 +34,7 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY --from=builder /app/target/release/credvault /usr/local/bin/credvault
-COPY --from=builder /app/migrations /app/migrations
+COPY --from=builder /app/crates/credvault/migrations /app/migrations
 # The default provider plugins ship as files, loaded through the same mechanism as any
 # third-party plugin. The binary embeds none; this directory is what makes it useful
 # out of the box. Operators add their own by appending dirs to VAULT_PLUGIN_DIRS.

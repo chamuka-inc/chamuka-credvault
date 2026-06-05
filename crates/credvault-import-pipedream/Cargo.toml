@@ -1,0 +1,19 @@
+[package]
+name = "credvault-import-pipedream"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Offline tool: turn a Pipedream components/ tree into credvault provider plugin manifests."
+# A developer/operator tool, not a published library. Shipped as a release binary only.
+publish = false
+
+[[bin]]
+name = "import-pipedream"
+path = "src/main.rs"
+
+[dependencies]
+credvault.workspace = true
+serde_json.workspace = true

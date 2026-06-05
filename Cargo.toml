@@ -1,78 +1,53 @@
-[package]
-name = "credvault"
+[workspace]
+resolver = "2"
+members = [
+    "crates/credvault",
+    "crates/credvault-import-pipedream",
+]
+
+# Shared package metadata. Each crate inherits these with `field.workspace = true`,
+# so version/license/repository are defined once for the whole workspace.
+[workspace.package]
 version = "1.0.0"
 edition = "2021"
 rust-version = "1.96"
-description = "Multi-tenant, multi-provider credential vault — the load-bearing layer of an integration platform."
 authors = ["Chamuka, Inc. <swiftugandan@gmail.com>"]
 license = "Apache-2.0"
-readme = "README.md"
 repository = "https://github.com/chamuka-inc/credvault"
 homepage = "https://github.com/chamuka-inc/credvault"
-documentation = "https://docs.rs/credvault"
-keywords = ["oauth", "credentials", "vault", "tokens", "secrets"]
-categories = ["authentication", "cryptography", "web-programming::http-server"]
-exclude = [
-    ".github/",
-    "docker-compose.yml",
-    "*.example.json",
-]
 
-[[bin]]
-name = "credvault"
-path = "src/main.rs"
-
-[[bin]]
-name = "import-pipedream"
-path = "src/bin/import_pipedream.rs"
-
-[lib]
-name = "credvault"
-path = "src/lib.rs"
-
-
-[features]
-default = []
-# Compile the service against an in-process SQLite (tests/dev only). Production
-# uses the default Postgres build.
-sqlite = ["sqlx/sqlite"]
-
-[dependencies]
+# Shared dependency versions. Each crate opts in with `<dep>.workspace = true` and may
+# add crate-specific features on top. One place to bump a version for the whole tree.
+[workspace.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "sync"] }
 axum = { version = "0.7", features = ["json", "query"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "timeout"] }
-
 sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio-rustls", "postgres", "time", "macros", "migrate",
 ] }
-
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
 anyhow = "1"
-
 secrecy = "0.8"
 zeroize = "1"
-
 aes-gcm-siv = "0.11"
 hmac = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"
 constant_time_eq = "0.3"
-
 time = { version = "0.3", features = ["serde", "macros"] }
 uuid = { version = "1", features = ["v4"] }
 async-trait = "0.1"
-
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 
-[dev-dependencies]
-tokio = { version = "1", features = ["rt", "macros", "test-util"] }
+# Internal crates. `path` builds the workspace locally; `version` lets the crate be
+# published to crates.io (publish strips `path` and uses `version`).
+credvault = { path = "crates/credvault", version = "1.0.0" }
 
 [profile.release]
 opt-level = 3

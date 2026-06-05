@@ -36,7 +36,7 @@ jobs:
         run: |
           tag="${GITHUB_REF_NAME#v}"
           manifest="$(cargo metadata --no-deps --format-version 1 \
-            | python3 -c 'import sys,json; print(json.load(sys.stdin)["packages"][0]["version"])')"
+            | python3 -c 'import sys,json; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="credvault"))')"
           echo "tag=$tag manifest=$manifest"
           if [ "$tag" != "$manifest" ]; then
             echo "::error::Tag v$tag does not match Cargo.toml version $manifest"
@@ -73,8 +73,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: cargo test --features sqlite
-      - run: cargo run --quiet -- migrate
+      - run: cargo test -p credvault --features sqlite
+      - run: cargo run -p credvault --quiet -- migrate
       - run: cargo test --all-targets
 
   publish-crate:
@@ -85,7 +85,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: cargo publish
-        run: cargo publish --locked
+        # Publish only the library/service crate; the import tool is `publish = false`.
+        run: cargo publish -p credvault --locked
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 

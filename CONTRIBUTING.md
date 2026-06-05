@@ -19,20 +19,27 @@ in [SECURITY.md](SECURITY.md).
 
 ## Getting started
 
-You need a recent stable Rust toolchain (MSRV is **1.96**; check `Cargo.toml`).
+You need a recent stable Rust toolchain (MSRV is **1.96**; check `Cargo.toml`). The
+toolchain is pinned in `rust-toolchain.toml`, so rustup installs the right one on first
+build. credvault is a Cargo **workspace** — run all commands from the repo root.
 
 ```bash
 git clone https://github.com/chamuka-inc/credvault
 cd credvault
 
-cargo build                       # default (Postgres) build
-cargo test                        # unit + integration (Postgres-only tests auto-skip)
-cargo test --features sqlite      # full DB lifecycle on in-process SQLite — no Postgres
+cargo build --workspace               # default (Postgres) build of both crates
+cargo test --workspace                # unit + integration (Postgres-only tests auto-skip)
+cargo test -p credvault --features sqlite   # full DB lifecycle on in-process SQLite
 ```
+
+The workspace has two crates: `crates/credvault` (the library and the `credvault`
+service binary) and `crates/credvault-import-pipedream` (the offline manifest importer).
+A `Makefile` wraps the common tasks — `make ci` runs the full PR gate set locally.
 
 No external services are required to develop locally: the `sqlite` feature runs the
 complete database lifecycle in process. Postgres-specific concurrency tests
-(`tests/service_pg.rs`) are gated on `DATABASE_URL` and run in CI against a real Postgres.
+(`crates/credvault/tests/service_pg.rs`) are gated on `DATABASE_URL` and run in CI against
+a real Postgres.
 
 ## The checks that gate every change
 
@@ -41,11 +48,13 @@ the contract:
 
 ```bash
 cargo fmt --all --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test
-cargo test --features sqlite
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
+cargo test -p credvault --features sqlite
 cargo build --release --locked
 ```
+
+Equivalently, `make ci` runs the four PR gates (`fmt-check lint test test-sqlite`).
 
 Dependency changes additionally run a supply-chain gate (the `security` workflow). To run
 it locally, install [`cargo-deny`](https://github.com/EmbarkStudios/cargo-deny) and
@@ -85,9 +94,9 @@ See the README's "Why Rust" section for the reasoning behind each.
 2. **Branch** from `main`.
 3. **Keep the PR focused.** One logical change per PR; unrelated cleanups go in their own.
 4. **Add or update tests** for any behavior change. New providers need a catalog test; new
-   service behavior needs a `tests/service_sqlite.rs` case.
-5. **Update documentation** (README, `DEPLOYMENT.md`, `.env.example`, `CHANGELOG.md`) when
-   behavior, config, or the API surface changes.
+   service behavior needs a `crates/credvault/tests/service_sqlite.rs` case.
+5. **Update documentation** (README, `docs/DEPLOYMENT.md`, `docs/ARCHITECTURE.md`,
+   `.env.example`, `CHANGELOG.md`) when behavior, config, or the API surface changes.
 6. **Write a clear PR description**: what changed, why, and how you verified it.
 7. **Ensure CI is green.** PRs are not reviewed until the gates pass.
 
@@ -100,10 +109,11 @@ merge — keep the commit log meaningful.
 ## Adding a provider
 
 Most provider additions are a single JSON manifest — see the "Adding a provider" section of
-the [README](README.md#adding-a-provider). Add a `<id>.json` to `plugins/default/` (for a
-new default) or any plugin directory, extend the `tests/default_plugins.rs` assertions if
-it introduces a quirk, and run `cargo test`. No code changes should be necessary for a
-standard OAuth2 or API-key provider.
+the [README](README.md#adding-a-provider) and the manifest contract in
+[`plugins/README.md`](plugins/README.md). Add a `<id>.json` to `plugins/default/` (for a
+new default) or any plugin directory, extend the
+`crates/credvault/tests/default_plugins.rs` assertions if it introduces a quirk, and run
+`cargo test`. No code changes should be necessary for a standard OAuth2 or API-key provider.
 
 ## License
 

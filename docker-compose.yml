@@ -95,6 +95,18 @@ services:
       migrate:
         condition: service_completed_successfully
     restart: unless-stopped
+    # The worker runs no HTTP server, so the image's default /healthz probe can never
+    # pass — it would always report unhealthy. Override it with a no-DB binary liveness
+    # probe: `list-providers` exercises the plugin loader (the same path the worker runs
+    # at startup) and exits non-zero if the binary or plugin manifests are broken. (It
+    # asserts binary/plugin integrity, not database reachability — a real loop crash is
+    # caught by the container exiting under `restart: unless-stopped`.)
+    healthcheck:
+      test: ["CMD", "credvault", "list-providers"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
 
 secrets:
   state_secret:
