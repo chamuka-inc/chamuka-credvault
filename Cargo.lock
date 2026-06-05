@@ -282,7 +282,7 @@ dependencies = [
  "base64",
  "constant_time_eq",
  "hmac",
- "rand 0.8.6",
+ "rand 0.9.4",
  "reqwest",
  "secrecy",
  "serde",
