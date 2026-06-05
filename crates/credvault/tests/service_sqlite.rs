@@ -23,52 +23,9 @@ use std::sync::{Arc, Mutex};
 
 type R = Result<(u16, serde_json::Value), TransportError>;
 
-// SQLite-dialect schema: TEXT ids, RFC3339/UTC timestamps that round-trip into
-// OffsetDateTime, the same unique identity index and partial "due" index as Postgres.
-const SCHEMA: &str = r#"
-CREATE TABLE tenants (
-    id            TEXT PRIMARY KEY,
-    name          TEXT NOT NULL,
-    api_key_hash  TEXT NOT NULL,
-    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-);
-CREATE UNIQUE INDEX uq_tenant_api_key ON tenants (api_key_hash);
-CREATE TABLE oauth_flows (
-    nonce             TEXT PRIMARY KEY,
-    provider          TEXT NOT NULL,
-    tenant_id         TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    external_user_id  TEXT NOT NULL,
-    account_key       TEXT NOT NULL DEFAULT 'default',
-    pkce_verifier     TEXT,
-    expires_at        TEXT NOT NULL,
-    consumed_at       TEXT,
-    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-);
-CREATE INDEX ix_oauth_flows_expiry ON oauth_flows (expires_at);
-CREATE TABLE connections (
-    id                  TEXT PRIMARY KEY,
-    tenant_id           TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    provider            TEXT NOT NULL,
-    external_user_id    TEXT NOT NULL,
-    account_key         TEXT NOT NULL DEFAULT 'default',
-    enc_access_token    TEXT NOT NULL,
-    enc_refresh_token   TEXT,
-    token_type          TEXT NOT NULL DEFAULT 'Bearer',
-    scopes              TEXT NOT NULL DEFAULT '',
-    expires_at          TEXT,
-    status              TEXT NOT NULL DEFAULT 'active',
-    refresh_attempts    INTEGER NOT NULL DEFAULT 0,
-    last_refresh_at     TEXT,
-    last_error          TEXT,
-    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-);
-CREATE UNIQUE INDEX uq_connection_identity
-    ON connections (tenant_id, provider, external_user_id, account_key);
-CREATE INDEX ix_connections_due
-    ON connections (status, expires_at) WHERE enc_refresh_token IS NOT NULL;
-CREATE INDEX ix_connections_tenant ON connections (tenant_id);
-"#;
+// SQLite-dialect schema, shared verbatim with the OpenAPI conformance harness
+// (scripts/openapi-conformance.sh) so the two can never drift. See the fixture header.
+const SCHEMA: &str = include_str!("fixtures/sqlite_schema.sql");
 
 fn test_config(keys: &str) -> Config {
     Config {

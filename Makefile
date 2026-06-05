@@ -2,6 +2,8 @@
 # so `make ci` locally is exactly what a pull request must clear. No hidden steps.
 
 CARGO ?= cargo
+REDOCLY ?= npx --yes @redocly/cli@latest
+OPENAPI_SPEC ?= docs/openapi.yaml
 
 .DEFAULT_GOAL := help
 
@@ -40,6 +42,15 @@ test: ## Unit + integration tests (Postgres-only tests auto-skip without DATABAS
 test-sqlite: ## Full DB lifecycle in-process on SQLite — no external services
 	$(CARGO) test -p credvault --features sqlite
 
+# ── API spec ─────────────────────────────────────────────────────────────────
+.PHONY: openapi-lint
+openapi-lint: ## Validate the OpenAPI spec (needs Node; uses npx @redocly/cli)
+	$(REDOCLY) lint $(OPENAPI_SPEC)
+
+.PHONY: openapi-test
+openapi-test: ## Boot on SQLite and fuzz the live server against the spec (needs schemathesis)
+	./scripts/openapi-conformance.sh
+
 # ── Database ─────────────────────────────────────────────────────────────────
 .PHONY: migrate
 migrate: ## Apply migrations (needs VAULT_DATABASE_URL)
@@ -56,7 +67,7 @@ deny: ## Advisories, licenses, bans, sources (needs cargo-deny)
 
 # ── Aggregate ────────────────────────────────────────────────────────────────
 .PHONY: ci
-ci: fmt-check lint test test-sqlite ## Run the full PR gate set locally
+ci: fmt-check lint test test-sqlite openapi-lint openapi-test ## Run the full PR gate set locally
 
 # ── Container / local stack ──────────────────────────────────────────────────
 .PHONY: docker
