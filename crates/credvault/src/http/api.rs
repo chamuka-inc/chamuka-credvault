@@ -11,10 +11,10 @@
 
 use std::time::Duration;
 
-use axum::extract::{DefaultBodyLimit, Path, Query, State};
+use axum::extract::{DefaultBodyLimit, State};
 use axum::response::{Html, IntoResponse, Redirect};
 use axum::routing::{delete, get, post};
-use axum::{Json, Router};
+use axum::Router;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use time::format_description::well_known::Rfc3339;
@@ -24,6 +24,7 @@ use tower_http::trace::TraceLayer;
 use crate::crypto::secret::{secret, ExposeSecret};
 use crate::error::Error;
 use crate::http::auth::{AdminPrincipal, TenantPrincipal};
+use crate::http::extract::{Json, Path, Query};
 use crate::http::ratelimit;
 use crate::{providers, service, AppState};
 

@@ -1,0 +1,14 @@
+# Redocly lint configuration for credvault's OpenAPI spec (docs/openapi.yaml).
+# `make openapi-lint` and the CI `openapi` job both read this file.
+extends:
+  - recommended
+rules:
+  # `/healthz`, `/readyz` and `/v1/providers` are unauthenticated and take no input, so
+  # they have no client-error (4xx) path to document. Rather than satisfy the recommended
+  # rule with fictional 4xx responses, we turn it off — every operation that *can* fail on
+  # client input already documents its 4xx codes explicitly.
+  operation-4xx-response: off
+  # credvault is self-hosted and has no canonical public host, so the example server uses
+  # `credvault.example.com` — the RFC 2606 domain reserved precisely for documentation.
+  # That is the correct placeholder, not a forgotten one, so this rule is off.
+  no-server-example.com: off

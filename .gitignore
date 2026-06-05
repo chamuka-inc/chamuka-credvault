@@ -1,5 +1,8 @@
 /target
 
+# OpenAPI conformance tooling (schemathesis / Hypothesis) writes a local cache.
+.hypothesis/
+
 # Secrets — never commit real credentials. `.env.example` is the only tracked env file.
 .env
 .env.*

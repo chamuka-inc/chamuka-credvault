@@ -1,0 +1,693 @@
+openapi: 3.1.0
+info:
+  title: credvault API
+  version: 1.0.0
+  summary: Multi-tenant credential vault — stores and brokers per-end-user provider credentials.
+  description: |
+    credvault holds OAuth 2.0 and API-key credentials on behalf of your platform's
+    end users and hands back a valid `access_token` on demand, refreshing it
+    transparently when it has expired. A **connection** is the unit it is built around:
+    the tuple `(tenant_id, provider, external_user_id, account_key)` mapped to encrypted
+    tokens plus lifecycle state.
+
+    ## Authentication
+    Two bearer credentials, both sent as `Authorization: Bearer <token>`:
+
+    * **Tenant API key** (`cvk_…`) — authenticates a tenant. The `tenant_id` every
+      tenant-scoped operation acts on is derived *server-side* from this key, never from
+      the request path or body, so a caller can only ever reach its own data.
+    * **Admin token** (`VAULT_ADMIN_TOKEN`) — the operator credential. Used only to
+      provision tenants.
+
+    The OAuth callback (`GET /v1/connect/{provider}/callback`) is the one route that takes
+    neither: it is reached by the end user's browser and is gated by the signed, single-use
+    `state` token instead.
+
+    > Note on auth scope: in this reference build the credential and management endpoints
+    > are intended to sit behind your platform's own service-to-service auth (mTLS /
+    > gateway / network policy). Tenant creation is the one admin-gated action.
+
+    ## Errors
+    Every error response shares the same JSON body — a stable machine `code` plus a
+    human `message` — so callers branch on `code` (e.g. `needs_reauth`) without parsing
+    prose. Client-facing messages never contain secrets or internal detail.
+
+    > **One exception — request-shape rejections.** A malformed request that fails before
+    > a handler runs — a missing/invalid required query or path parameter, an unparseable
+    > or wrong-content-type JSON body, or a body over the size limit — is rejected by the
+    > framework's own extractors, not the handler. Those responses (typically `400`, plus
+    > `413`/`415` for body/content-type problems) carry a **plain-text** body, **not** the
+    > `{code, message}` envelope. The documented `400 validation` responses are the
+    > handler's own field checks (e.g. empty/oversized `external_user_id`), which always
+    > use the envelope. Don't assume every `4xx` is JSON-parseable.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+  contact:
+    name: credvault
+    url: https://github.com/chamuka-inc/credvault
+
+servers:
+  - url: http://localhost:8000
+    description: Local default bind (VAULT_PUBLIC_BASE_URL)
+  - url: https://{host}
+    description: Deployment behind your gateway
+    variables:
+      host:
+        default: credvault.example.com
+
+tags:
+  - name: health
+    description: Liveness and readiness probes (unauthenticated).
+  - name: discovery
+    description: Provider catalog (unauthenticated).
+  - name: tenants
+    description: Tenant provisioning (admin-gated).
+  - name: connect
+    description: Establishing connections — OAuth and API-key credential flows.
+  - name: credentials
+    description: The endpoint — fetching a usable access token.
+  - name: connections
+    description: Listing and revoking a tenant's connections.
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness probe
+      description: Returns immediately without touching the database.
+      operationId: healthz
+      security: []
+      responses:
+        "200":
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
+              example: { ok: true }
+
+  /readyz:
+    get:
+      tags: [health]
+      summary: Readiness probe
+      description: Executes `SELECT 1` against the database; fails if the DB is unreachable.
+      operationId: readyz
+      security: []
+      responses:
+        "200":
+          description: Database reachable; ready to serve.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ready]
+                properties:
+                  ready:
+                    type: boolean
+                    const: true
+              example: { ready: true }
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/providers:
+    get:
+      tags: [discovery]
+      summary: List providers
+      description: |
+        The provider catalog loaded from plugin manifests, each annotated with whether its
+        client credentials are configured in this deployment. Unauthenticated; reveals no
+        secrets.
+      operationId: listProviders
+      security: []
+      responses:
+        "200":
+          description: The configured provider catalog.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [providers]
+                properties:
+                  providers:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Provider"
+              example:
+                providers:
+                  - id: github
+                    version: "1.0.0"
+                    auth_type: oauth2
+                    configured: true
+                    scopes: ["repo", "read:user"]
+                  - id: stripe
+                    version: "1.0.0"
+                    auth_type: api_key
+                    configured: true
+                    scopes: []
+
+  /v1/tenants:
+    post:
+      tags: [tenants]
+      summary: Create a tenant
+      description: |
+        Provisions a new tenant and returns its API key. **The API key is returned exactly
+        once, here** — only its hash is stored, so it cannot be recovered later. Requires
+        the admin bearer token.
+      operationId: createTenant
+      security:
+        - adminToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                  description: Human-readable tenant name.
+            example: { name: acme }
+      responses:
+        "200":
+          description: Tenant created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, name, api_key]
+                properties:
+                  id:
+                    type: string
+                    description: Server-assigned tenant id.
+                  name:
+                    type: string
+                  api_key:
+                    type: string
+                    pattern: '^cvk_'
+                    description: The tenant's bearer key. Shown once; store it now.
+              example:
+                id: 7e1c…
+                name: acme
+                api_key: cvk_AbC123…
+        "400":
+          description: Invalid name (empty or over 255 chars).
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/connect/{provider}/start:
+    get:
+      tags: [connect]
+      summary: Begin an OAuth authorization
+      description: |
+        Starts the authorization-code flow for an OAuth2 provider and returns the
+        `authorize_url` the end user must visit. With `redirect=true` the server responds
+        with a `303 See Other` to that URL instead of JSON, so the route can be linked
+        directly.
+      operationId: connectStart
+      security:
+        - tenantKey: []
+      parameters:
+        - $ref: "#/components/parameters/Provider"
+        - name: external_user_id
+          in: query
+          required: true
+          description: Your platform's id for the end user being connected.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 255
+        - $ref: "#/components/parameters/AccountKeyQuery"
+        - name: redirect
+          in: query
+          required: false
+          description: When `true`, respond with a 303 redirect to the authorize URL instead of JSON.
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Authorization URL to send the end user to.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [authorize_url]
+                properties:
+                  authorize_url:
+                    type: string
+                    format: uri
+              example:
+                authorize_url: https://github.com/login/oauth/authorize?client_id=Iv1.abc123&state=eyJ0eXAiOiJKV1QifQ
+        "303":
+          description: See Other — redirect to the provider's authorize URL (when `redirect=true`).
+          headers:
+            Location:
+              description: The provider authorize URL.
+              schema:
+                type: string
+                format: uri
+        "400":
+          description: |
+            Validation error (`validation`, e.g. missing/invalid `external_user_id`), or the
+            provider is not an OAuth provider (`bad_provider` — use the api-key flow instead).
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/UnknownProvider"
+        "503":
+          description: Provider client credentials are not configured (`not_configured`).
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/connect/{provider}/callback:
+    get:
+      tags: [connect]
+      summary: OAuth redirect target
+      description: |
+        The redirect URI the provider sends the end user's browser back to. Exchanges the
+        authorization `code`, validates the single-use signed `state`, and stores the
+        resulting tokens. Returns a small HTML confirmation page. Not bearer-authenticated —
+        the `state` token is the credential.
+      operationId: connectCallback
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Provider"
+        - name: code
+          in: query
+          required: true
+          description: Authorization code issued by the provider.
+          schema:
+            type: string
+            minLength: 1
+        - name: state
+          in: query
+          required: true
+          description: The signed, single-use state nonce minted at start.
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Connection established; human-facing confirmation page.
+          content:
+            text/html:
+              schema:
+                type: string
+              example: "<h2>Connected github ✓</h2><p>You can close this window.</p>"
+        "400":
+          description: Invalid or expired `state` (`bad_state`), or validation error.
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/UnknownProvider"
+        "502":
+          description: Upstream provider error during token exchange (`upstream_error`).
+          $ref: "#/components/responses/Error"
+        "503":
+          description: Provider client credentials are not configured (`not_configured`).
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/connect/{provider}/api-key:
+    post:
+      tags: [connect]
+      summary: Store an API-key credential
+      description: |
+        Records a provider API key for an end user as a connection — the non-OAuth path.
+        The key is encrypted at rest; it is never returned by any read endpoint except the
+        credentials endpoint.
+      operationId: connectApiKey
+      security:
+        - tenantKey: []
+      parameters:
+        - $ref: "#/components/parameters/Provider"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [external_user_id, api_key]
+              properties:
+                external_user_id:
+                  type: string
+                  minLength: 1
+                  maxLength: 255
+                  description: Your platform's id for the end user.
+                api_key:
+                  type: string
+                  minLength: 1
+                  description: The provider API key to store.
+                account_key:
+                  $ref: "#/components/schemas/AccountKey"
+            example:
+              external_user_id: user-1
+              api_key: sk_test_…
+      responses:
+        "200":
+          description: Connection stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicConnection"
+        "400":
+          description: |
+            Validation error (`validation`, missing/invalid `external_user_id` or empty
+            `api_key`), or the provider does not use API-key auth (`bad_provider` — use the
+            OAuth flow instead).
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/UnknownProvider"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/credentials/{provider}:
+    get:
+      tags: [credentials]
+      summary: Get a usable access token
+      description: |
+        **The endpoint.** Returns a currently-valid `access_token` for the connection,
+        refreshing it transparently if it has expired. This is the one place a secret
+        crosses the API boundary.
+
+        If the stored credential can no longer be refreshed, responds `409 needs_reauth` —
+        the caller should send the end user back through `connect/{provider}/start`.
+      operationId: getCredentials
+      security:
+        - tenantKey: []
+      parameters:
+        - $ref: "#/components/parameters/Provider"
+        - name: external_user_id
+          in: query
+          required: true
+          description: Your platform's id for the end user.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 255
+        - $ref: "#/components/parameters/AccountKeyQuery"
+      responses:
+        "200":
+          description: A valid access token.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessToken"
+        "400":
+          description: Validation error.
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No connection for this tenant/provider/user (`not_connected`), or unknown provider (`unknown_provider`).
+          $ref: "#/components/responses/Error"
+        "409":
+          description: Connection needs re-authorization (`needs_reauth`).
+          $ref: "#/components/responses/Error"
+        "503":
+          description: |
+            Token refresh failed permanently (`refresh_failed`), or the provider's client
+            credentials needed for refresh are not configured (`not_configured`).
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/connections:
+    get:
+      tags: [connections]
+      summary: List connections
+      description: All connections for the authenticated tenant. Contains no secrets.
+      operationId: listConnections
+      security:
+        - tenantKey: []
+      responses:
+        "200":
+          description: The tenant's connections.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [connections]
+                properties:
+                  connections:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PublicConnection"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /v1/connections/{id}:
+    delete:
+      tags: [connections]
+      summary: Revoke a connection
+      description: |
+        Deletes a connection (tenant-scoped). For providers that declare a `revoke_url`,
+        the token is first revoked upstream (RFC 7009, best-effort) before the local row is
+        removed — so the credential is killed at the provider, not just forgotten locally.
+      operationId: deleteConnection
+      security:
+        - tenantKey: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The connection id (as returned by list/store).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Connection deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                properties:
+                  deleted:
+                    type: string
+                    description: The id that was deleted.
+              example: { deleted: 9a2f… }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: No such connection for this tenant (`not_connected`).
+          $ref: "#/components/responses/Error"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  securitySchemes:
+    tenantKey:
+      type: http
+      scheme: bearer
+      description: "A tenant API key (`cvk_…`) sent as `Authorization: Bearer <key>`."
+    adminToken:
+      type: http
+      scheme: bearer
+      description: "The operator admin token (`VAULT_ADMIN_TOKEN`) sent as `Authorization: Bearer <token>`."
+
+  parameters:
+    Provider:
+      name: provider
+      in: path
+      required: true
+      description: Provider id, e.g. `github`, `google`, `slack`, `notion`, `stripe`.
+      schema:
+        type: string
+      examples:
+        github: { value: github }
+        stripe: { value: stripe }
+    AccountKeyQuery:
+      name: account_key
+      in: query
+      required: false
+      description: |
+        Disambiguates multiple accounts the same end user holds at one provider. Defaults
+        to `default`.
+      schema:
+        $ref: "#/components/schemas/AccountKey"
+
+  responses:
+    Error:
+      description: Error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Missing or invalid bearer credential (`unauthorized`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { code: unauthorized, message: unauthorized }
+    InternalError:
+      description: Unexpected internal error, e.g. the database is unreachable (`internal`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { code: internal, message: internal error }
+    UnknownProvider:
+      description: No such provider (`unknown_provider`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example: { code: unknown_provider, message: unknown provider }
+
+  schemas:
+    Error:
+      type: object
+      description: The uniform error envelope returned by every failing request.
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable error code; branch on this.
+          enum:
+            - not_connected
+            - needs_reauth
+            - refresh_failed
+            - unknown_provider
+            - bad_provider
+            - not_configured
+            - bad_state
+            - unknown_tenant
+            - unauthorized
+            - validation
+            - upstream_error
+            - internal
+        message:
+          type: string
+          description: Human-readable detail. Never contains secrets or internal state.
+      example:
+        code: needs_reauth
+        message: connection needs re-authorization
+
+    AuthType:
+      type: string
+      description: How a provider's credentials are obtained.
+      enum: [oauth2, api_key]
+
+    Provider:
+      type: object
+      required: [id, version, auth_type, configured, scopes]
+      properties:
+        id:
+          type: string
+          description: Provider key used in routes and storage.
+        version:
+          type: string
+          description: Manifest packaging version.
+        auth_type:
+          $ref: "#/components/schemas/AuthType"
+        configured:
+          type: boolean
+          description: |
+            Whether this deployment has the client credentials needed to use the provider.
+            Always `true` for `api_key` providers; for `oauth2`, true once client id and
+            secret are present.
+        scopes:
+          type: array
+          description: Default scopes requested during authorization.
+          items:
+            type: string
+
+    AccountKey:
+      type: string
+      minLength: 1
+      maxLength: 255
+      default: default
+      description: |
+        Account discriminator within `(tenant, provider, end-user)`. Defaults to `default`,
+        which covers the common single-account case.
+
+    AccessToken:
+      type: object
+      description: A usable access token plus its metadata. The token is a secret.
+      required: [access_token, token_type, expires_at, scopes]
+      properties:
+        access_token:
+          type: string
+          description: A currently-valid access token for the provider.
+        token_type:
+          type: string
+          description: Token type, e.g. `Bearer`.
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+          description: RFC 3339 expiry, or null if the token does not expire.
+        scopes:
+          type: array
+          items:
+            type: string
+      example:
+        access_token: gho_…
+        token_type: Bearer
+        expires_at: "2026-06-05T18:30:00Z"
+        scopes: ["repo", "read:user"]
+
+    PublicConnection:
+      type: object
+      description: A connection's non-secret projection — safe to list and return.
+      required:
+        [id, tenant_id, provider, external_user_id, account_key, status, scopes, expires_at, last_refresh_at]
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: string
+        provider:
+          type: string
+        external_user_id:
+          type: string
+        account_key:
+          $ref: "#/components/schemas/AccountKey"
+        status:
+          type: string
+          description: Lifecycle state of the connection.
+          enum: [active, needs_reauth, error]
+        scopes:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+          description: RFC 3339 access-token expiry, if known.
+        last_refresh_at:
+          type: [string, "null"]
+          format: date-time
+          description: RFC 3339 timestamp of the last successful refresh, if any.
+      example:
+        id: 9a2f…
+        tenant_id: 7e1c…
+        provider: github
+        external_user_id: user-1
+        account_key: default
+        status: active
+        scopes: ["repo"]
+        expires_at: "2026-06-05T18:30:00Z"
+        last_refresh_at: "2026-06-05T17:30:00Z"
+
+security:
+  - tenantKey: []
