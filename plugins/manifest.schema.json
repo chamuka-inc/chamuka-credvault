@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/chamuka-inc/credvault/plugins/manifest.schema.json",
+  "title": "credvault provider plugin manifest",
+  "description": "One JSON file per provider. Mirrors the ProviderSpec fields plus packaging metadata. The loader uses `deny_unknown_fields`, so any key not listed here is a hard error. Secrets never appear here — only the names of the env vars credentials are read from.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "version", "auth_type"],
+  "properties": {
+    "manifest_version": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1,
+      "default": 1,
+      "description": "Envelope schema version. A value newer than the binary understands is refused."
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Canonical provider key — used in /v1/connect/{id} routes, the DB `provider` column, and the encryption AAD. Stable and unique across loaded plugins. By convention matches the file name (`<id>.json`)."
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Plugin version (semver recommended). Packaging metadata only; surfaced by discovery, ignored by the engine at runtime."
+    },
+    "auth_type": {
+      "enum": ["oauth2", "api_key"],
+      "description": "`oauth2` drives the redirect/exchange/refresh flow; `api_key` stores a user-supplied long-lived key with no redirect and no refresh."
+    },
+    "authorize_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "OAuth2 authorization endpoint. Required for `oauth2`."
+    },
+    "token_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "OAuth2 token endpoint (code exchange + refresh). Required for `oauth2`."
+    },
+    "revoke_url": {
+      "type": ["string", "null"],
+      "format": "uri",
+      "description": "Optional RFC 7009 revocation endpoint, called on disconnect. Omit if the provider has none."
+    },
+    "client_id_env": {
+      "type": "string",
+      "description": "Name of the env var holding the OAuth client id (or its `_FILE` variant for a mounted secret). Required for `oauth2`."
+    },
+    "client_secret_env": {
+      "type": "string",
+      "description": "Name of the env var holding the OAuth client secret (or its `_FILE` variant). Required for `oauth2`."
+    },
+    "default_scopes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Scopes requested when the caller does not specify any."
+    },
+    "scope_separator": {
+      "type": "string",
+      "default": " ",
+      "description": "Joins scopes in the authorize URL. Almost always a space; a few providers use a comma."
+    },
+    "token_auth_style": {
+      "enum": ["post", "basic"],
+      "default": "post",
+      "description": "How client credentials are sent to the token endpoint: `post` (in the form body) or `basic` (HTTP Basic)."
+    },
+    "token_accept_json": {
+      "type": "boolean",
+      "default": false,
+      "description": "Send `Accept: application/json` to the token endpoint (some providers default to form-encoded responses otherwise)."
+    },
+    "extra_authorize_params": {
+      "type": "array",
+      "default": [],
+      "description": "Additional query parameters appended to the authorize URL, as [key, value] pairs (e.g. [[\"access_type\",\"offline\"],[\"prompt\",\"consent\"]]).",
+      "items": {
+        "type": "array",
+        "prefixItems": [{ "type": "string" }, { "type": "string" }],
+        "minItems": 2,
+        "maxItems": 2
+      }
+    },
+    "token_path": {
+      "type": "string",
+      "default": "access_token",
+      "description": "Dotted path to the access token in the token response."
+    },
+    "refresh_token_path": {
+      "type": "string",
+      "default": "refresh_token",
+      "description": "Dotted path to the refresh token in the token response."
+    },
+    "expires_in_path": {
+      "type": "string",
+      "default": "expires_in",
+      "description": "Dotted path to the lifetime (seconds) in the token response."
+    },
+    "refresh_token_rotates": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if the provider issues a new refresh token on each refresh (the stored token is then replaced)."
+    },
+    "uses_pkce": {
+      "type": "boolean",
+      "default": false,
+      "description": "Drive the authorization-code flow with PKCE (RFC 7636, S256). Required by some providers (e.g. X/Twitter); harmless elsewhere."
+    }
+  },
+  "if": {
+    "properties": { "auth_type": { "const": "oauth2" } }
+  },
+  "then": {
+    "required": ["authorize_url", "token_url", "client_id_env", "client_secret_env"]
+  }
+}

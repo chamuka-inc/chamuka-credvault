@@ -1,0 +1,120 @@
+# Local / reference topology: one image, three roles (migrate, web, worker)
+# sharing a Postgres. Mirrors a real deployment: migrations run once as a
+# release step; web and worker are independent, horizontally scalable processes.
+#
+#   mkdir -p secrets
+#   openssl rand -base64 32 > secrets/state_secret.txt
+#   openssl rand -base64 32 > secrets/admin_token.txt
+#   printf '{"1":"%s"}' "$(credvault gen-key)" > secrets/vault_keys.txt
+#   chmod 600 secrets/*.txt
+#   cp .env.example .env          # non-secret operational config only
+#   docker compose up --build
+#
+# Secrets are delivered as mounted files (Docker secrets, surfaced to the app via the
+# *_FILE convention), NOT as environment variables — env is readable via `docker inspect`
+# and /proc/<pid>/environ. The `migrate` release step is given only the database URL.
+#
+# Providers are plugins. The image ships the default manifests at /app/plugins/default and
+# sets VAULT_PLUGIN_DIRS to it, so web + worker have the defaults with no config. To add or
+# override providers, mount a directory and append it (later dirs win by id), e.g. on web
+# and worker:
+#     volumes:    [ "./plugins/custom:/app/plugins/custom:ro" ]
+#     environment: { VAULT_PLUGIN_DIRS: "/app/plugins/default:/app/plugins/custom" }
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: vault
+      POSTGRES_PASSWORD: vault
+      POSTGRES_DB: vault
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vault -d vault"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # Release phase. Applies migrations, then exits. Needs only the database URL — no app
+  # secrets. Schema is owned here, never by the app at boot.
+  migrate:
+    build: .
+    command: ["migrate"]
+    environment:
+      VAULT_DATABASE_URL: postgres://vault:vault@db:5432/vault
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  web:
+    build: .
+    command: ["web"]
+    env_file: .env
+    environment:
+      VAULT_DATABASE_URL: postgres://vault:vault@db:5432/vault
+      VAULT_PUBLIC_BASE_URL: http://localhost:8000
+      # Bind to all interfaces inside the container (the app defaults to loopback).
+      VAULT_BIND_HOST: "0.0.0.0"
+      PORT: "8000"
+      VAULT_STATE_SECRET_FILE: /run/secrets/state_secret
+      VAULT_ADMIN_TOKEN_FILE: /run/secrets/admin_token
+      VAULT_KEYS_FILE: /run/secrets/vault_keys
+    secrets:
+      - state_secret
+      - admin_token
+      - vault_keys
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["worker"]
+    env_file: .env
+    environment:
+      VAULT_DATABASE_URL: postgres://vault:vault@db:5432/vault
+      VAULT_STATE_SECRET_FILE: /run/secrets/state_secret
+      VAULT_ADMIN_TOKEN_FILE: /run/secrets/admin_token
+      VAULT_KEYS_FILE: /run/secrets/vault_keys
+    secrets:
+      - state_secret
+      - admin_token
+      - vault_keys
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    # The worker runs no HTTP server, so the image's default /healthz probe can never
+    # pass — it would always report unhealthy. Override it with a no-DB binary liveness
+    # probe: `list-providers` exercises the plugin loader (the same path the worker runs
+    # at startup) and exits non-zero if the binary or plugin manifests are broken. (It
+    # asserts binary/plugin integrity, not database reachability — a real loop crash is
+    # caught by the container exiting under `restart: unless-stopped`.)
+    healthcheck:
+      test: ["CMD", "credvault", "list-providers"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+secrets:
+  state_secret:
+    file: ./secrets/state_secret.txt
+  admin_token:
+    file: ./secrets/admin_token.txt
+  vault_keys:
+    file: ./secrets/vault_keys.txt
+
+volumes:
+  pgdata:

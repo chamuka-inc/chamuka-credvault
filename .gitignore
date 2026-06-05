@@ -1,0 +1,9 @@
+/target
+
+# Secrets — never commit real credentials. `.env.example` is the only tracked env file.
+.env
+.env.*
+!.env.example
+/secrets/
+*.key
+*.pem

@@ -1,0 +1,12 @@
+{
+  "manifest_version": 1,
+  "id": "slack",
+  "version": "1.0.0",
+  "auth_type": "oauth2",
+  "authorize_url": "https://slack.com/oauth/v2/authorize",
+  "token_url": "https://slack.com/api/oauth.v2.access",
+  "client_id_env": "SLACK_CLIENT_ID",
+  "client_secret_env": "SLACK_CLIENT_SECRET",
+  "default_scopes": ["chat:write", "channels:read"],
+  "token_path": "authed_user.access_token"
+}

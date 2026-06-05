@@ -1,0 +1,97 @@
+# CI is the always-present reviewer. Because this codebase is maintained by AI
+# agents, every gate here is machine-checkable: formatting, lint-as-error, the
+# type-checked test suite, and a real-Postgres integration run that exercises the
+# locked refresh path. Nothing merges that the compiler and these jobs reject.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # Fast, DB-free gates. Fail the PR on any formatting or lint deviation.
+  lint-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: rustfmt
+        run: cargo fmt --all --check
+      - name: clippy (warnings = errors)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: unit + integration tests (no DB)
+        run: cargo test --all-targets
+
+  # Full DB lifecycle with zero external services: SQLite is compiled in and the
+  # service runs against it in-process. Fast gate that proves the lifecycle logic
+  # (the Postgres job below proves the row-level locking it can't reproduce).
+  db-sqlite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: full lifecycle on SQLite
+        run: cargo test -p credvault --features sqlite
+
+  # Full lifecycle against a real Postgres. This is where the DATABASE_URL-gated
+  # service_pg test actually runs: OAuth exchange, encrypted upsert, the
+  # SELECT ... FOR UPDATE just-in-time refresh, and the API-key path.
+  integration-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: vault
+          POSTGRES_PASSWORD: vault
+          POSTGRES_DB: vault
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vault -d vault"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://vault:vault@localhost:5432/vault
+      VAULT_DATABASE_URL: postgres://vault:vault@localhost:5432/vault
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: apply migrations
+        run: cargo run -p credvault --quiet -- migrate
+      - name: integration tests (with Postgres)
+        run: cargo test --all-targets
+
+  # Prove the deployment artifact compiles in release profile (LTO, stripped).
+  release-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo build --release --locked
+        run: cargo build --release --locked
+
+  # The image must build and the binary must answer its own healthcheck.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build image
+        run: docker build -t credvault:ci .
+      - name: binary smoke test (no DB needed)
+        run: |
+          docker run --rm credvault:ci list-providers
+          docker run --rm credvault:ci gen-key | head -c 16

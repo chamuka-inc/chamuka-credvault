@@ -1,0 +1,12 @@
+{
+  "manifest_version": 1,
+  "id": "spotify",
+  "version": "1.0.0",
+  "auth_type": "oauth2",
+  "authorize_url": "https://accounts.spotify.com/authorize",
+  "token_url": "https://accounts.spotify.com/api/token",
+  "client_id_env": "SPOTIFY_CLIENT_ID",
+  "client_secret_env": "SPOTIFY_CLIENT_SECRET",
+  "default_scopes": ["user-read-email", "user-read-private"],
+  "token_auth_style": "basic"
+}

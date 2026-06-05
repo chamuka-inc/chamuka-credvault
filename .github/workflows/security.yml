@@ -1,0 +1,50 @@
+# Supply-chain security. A credential vault's dependency tree is part of its attack
+# surface, so we check it continuously, not just at release:
+#   - cargo-audit  : known RUSTSEC advisories against the locked tree
+#   - cargo-deny   : advisories + license policy + banned/duplicate crates + source allow-list
+#
+# Runs on dependency changes and on a weekly schedule so a newly-disclosed advisory
+# against an unchanged dependency still surfaces.
+
+name: security
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "crates/**/Cargo.toml"
+      - "Cargo.lock"
+      - "deny.toml"
+      - ".github/workflows/security.yml"
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "crates/**/Cargo.toml"
+      - "Cargo.lock"
+      - "deny.toml"
+      - ".github/workflows/security.yml"
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo audit (RUSTSEC advisories)
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: cargo deny (advisories, licenses, bans, sources)
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses bans sources

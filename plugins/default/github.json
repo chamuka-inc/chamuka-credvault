@@ -1,0 +1,12 @@
+{
+  "manifest_version": 1,
+  "id": "github",
+  "version": "1.0.0",
+  "auth_type": "oauth2",
+  "authorize_url": "https://github.com/login/oauth/authorize",
+  "token_url": "https://github.com/login/oauth/access_token",
+  "client_id_env": "GITHUB_CLIENT_ID",
+  "client_secret_env": "GITHUB_CLIENT_SECRET",
+  "default_scopes": ["read:user"],
+  "token_accept_json": true
+}
