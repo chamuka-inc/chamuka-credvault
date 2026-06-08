@@ -1,0 +1,82 @@
+# Local end-to-end bring-up for credvault. Secrets come from a single source — the
+# existing ./.env, which already holds the live GitHub app creds plus VAULT_KEYS /
+# VAULT_STATE_SECRET / VAULT_ADMIN_TOKEN — pulled in via `env_file`. (No ./secrets/*.txt
+# file mounts: this is a local dev compose, and mixing them in would silently shadow the
+# .env values, since the app's `{KEY}_FILE` form wins over the plain env var.)
+# `environment:` overrides only the few values that must differ inside the compose
+# network (DB host, bind host, insecure-HTTP for the non-TLS local PG).
+#
+#   docker compose -f compose.local.yml up -d --build
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: vault
+      POSTGRES_PASSWORD: vault
+      POSTGRES_DB: vault
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata_local:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vault -d vault"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build: .
+    command: ["migrate"]
+    environment:
+      VAULT_DATABASE_URL: postgres://vault:vault@db:5432/vault
+      VAULT_ALLOW_INSECURE_HTTP: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  web:
+    build: .
+    command: ["web"]
+    env_file: .env
+    environment:
+      VAULT_DATABASE_URL: postgres://vault:vault@db:5432/vault
+      VAULT_PUBLIC_BASE_URL: http://localhost:8000
+      VAULT_BIND_HOST: "0.0.0.0"
+      PORT: "8000"
+      VAULT_ALLOW_INSECURE_HTTP: "1"
+      VAULT_PLUGIN_DIRS: /app/plugins/default
+      VAULT_ACTIVE_KEY: "1"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["worker"]
+    env_file: .env
+    environment:
+      VAULT_DATABASE_URL: postgres://vault:vault@db:5432/vault
+      VAULT_ALLOW_INSECURE_HTTP: "1"
+      VAULT_PLUGIN_DIRS: /app/plugins/default
+      VAULT_ACTIVE_KEY: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "credvault", "list-providers"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  pgdata_local:
