@@ -45,6 +45,10 @@ pub struct Connection {
     pub refresh_attempts: i32,
     pub last_refresh_at: Option<OffsetDateTime>,
     pub last_error: Option<String>,
+    /// Per-connection instance JSON for tenant-scoped providers (see `ProviderSpec
+    /// ::instance_vars`); `None` for ordinary global providers. Carries no secret — it
+    /// holds the customer's host/tenant (e.g. `{"host":"…","tenant":"…"}`).
+    pub instance: Option<String>,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
 }

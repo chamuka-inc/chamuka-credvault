@@ -21,6 +21,7 @@ CREATE TABLE oauth_flows (
     pkce_verifier     TEXT,
     expires_at        TEXT NOT NULL,
     consumed_at       TEXT,
+    instance          TEXT,
     created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 CREATE INDEX ix_oauth_flows_expiry ON oauth_flows (expires_at);
@@ -39,6 +40,7 @@ CREATE TABLE connections (
     refresh_attempts    INTEGER NOT NULL DEFAULT 0,
     last_refresh_at     TEXT,
     last_error          TEXT,
+    instance            TEXT,
     created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );

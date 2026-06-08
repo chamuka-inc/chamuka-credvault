@@ -100,6 +100,7 @@ async fn full_lifecycle() {
             account_key: "default",
         },
         &[],
+        None,
     )
     .await
     .expect("start");

@@ -129,6 +129,11 @@ struct StartQuery {
     account_key: Option<String>,
     #[serde(default)]
     redirect: Option<bool>,
+    /// Tenant-scoped providers only: a JSON object naming the provider's declared
+    /// `instance_vars`, e.g. `{"host":"wd2-impl-services1.workday.com","tenant":"acme"}`.
+    /// Ignored by ordinary providers; required by instance providers.
+    #[serde(default)]
+    instance: Option<String>,
 }
 
 async fn connect_start(
@@ -151,6 +156,7 @@ async fn connect_start(
             account_key: &account_key,
         },
         &[],
+        q.instance.as_deref(),
     )
     .await?;
     if q.redirect.unwrap_or(false) {
@@ -253,12 +259,19 @@ async fn get_credentials(
         },
     )
     .await?;
-    // The one legitimate exposure: handing the caller the token they asked for.
+    // The one legitimate exposure: handing the caller the token they asked for. For
+    // tenant-scoped providers, `instance` carries the customer's host/tenant so the caller
+    // can build the provider API base; it is a JSON object (or absent).
+    let instance = resp
+        .instance
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<Value>(s).ok());
     Ok(Json(json!({
         "access_token": resp.access_token.expose_secret(),
         "token_type": resp.token_type,
         "expires_at": resp.expires_at.and_then(|d| d.format(&Rfc3339).ok()),
         "scopes": resp.scopes,
+        "instance": instance,
     })))
 }
 
