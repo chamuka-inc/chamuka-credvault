@@ -211,7 +211,8 @@ all JSON fields): `token_auth_style` (`"post"` body vs `"basic"`), `token_accept
 `token_path` (dotted path into a nested token JSON, e.g. Slack's `authed_user.access_token`),
 `extra_authorize_params` (e.g. Google's `[["access_type","offline"],["prompt","consent"]]`),
 `refresh_token_rotates` (whether the provider issues a new refresh token on refresh),
-and `uses_pkce` (drive the flow with PKCE — see below).
+and `uses_pkce` (drive the flow with PKCE — see below). For providers whose endpoints
+embed a per-customer host/tenant (e.g. Workday), see **Tenant-scoped providers** below.
 
 ### OAuth flow: PKCE & revocation
 
@@ -227,6 +228,40 @@ provider plugin exercises this end to end.
 On disconnect, `DELETE /v1/connections/:id` **revokes the token upstream** (RFC 7009,
 best-effort) for providers that declare a `revoke_url`, then removes the local row — so a
 deleted credential is killed at the provider, not just forgotten locally.
+
+### Tenant-scoped (instance) providers
+
+Some providers (e.g. Workday) are multi-tenant with a **per-customer** host and tenant in
+every URL — the authorize/token endpoints *and* the API base. A plugin marks itself
+tenant-scoped with two declarative fields:
+
+```jsonc
+{
+  "id": "workday",
+  "auth_type": "oauth2",
+  "authorize_url": "https://{host}/ccx/oauth2/{tenant}/authorize",
+  "token_url":     "https://{host}/ccx/oauth2/{tenant}/token",
+  "client_id_env": "WORKDAY_CLIENT_ID",
+  "client_secret_env": "WORKDAY_CLIENT_SECRET",
+  "instance_vars": ["host", "tenant"],            // template variables in the URLs
+  "instance_host_suffixes": [".workday.com"]       // allowed hosts (required when instance_vars is set)
+}
+```
+
+The caller supplies the values per connection via the `instance` query parameter on
+`connect/{provider}/start` — a JSON object naming every `instance_var`, e.g.
+`?instance={"host":"…","tenant":"…"}`. That instance is stored on the connection (carried
+through the single-use flow row), used to rebuild the per-customer endpoints on every code
+exchange, refresh, and revoke, and returned on the credentials response so the caller can
+build the provider's API base.
+
+Because the host is **caller-supplied**, the resolved URLs are SSRF-checked **and**
+matched against `instance_host_suffixes` at *use* time — not just at manifest load — so a
+tenant cannot point the vault at an arbitrary origin and exfiltrate the deployment's client
+secret. Each suffix must begin with `.` (so `.workday.com` matches `x.workday.com` but not
+`evilworkday.com`). At manifest load, the templated URLs are validated structurally: https
+scheme, and every `{placeholder}` must be a declared `instance_var`. The OAuth engine is
+unchanged — the service resolves a per-connection spec and the same single code path runs.
 
 ### Discovery, overrides & validation
 

@@ -27,13 +27,16 @@ use rand::RngCore;
 
 const COLS: &str = "id, tenant_id, provider, external_user_id, account_key, \
     enc_access_token, enc_refresh_token, token_type, scopes, expires_at, status, \
-    refresh_attempts, last_refresh_at, last_error, created_at, updated_at";
+    refresh_attempts, last_refresh_at, last_error, instance, created_at, updated_at";
 
 pub struct AccessToken {
     pub access_token: SecretString,
     pub token_type: String,
     pub expires_at: Option<OffsetDateTime>,
     pub scopes: Vec<String>,
+    /// Per-connection instance JSON for tenant-scoped providers (e.g. the Workday host/
+    /// tenant), so the caller can build the API base. `None` for ordinary providers.
+    pub instance: Option<String>,
 }
 
 /// The natural key of a connection, passed as one value to keep call sites tidy.
@@ -127,6 +130,7 @@ struct ClaimedFlow {
     external_user_id: String,
     account_key: String,
     pkce_verifier: Option<String>,
+    instance: Option<String>,
 }
 
 /// Begin an OAuth2 authorization. The identity is supplied by the **authenticated tenant**,
@@ -139,6 +143,7 @@ pub async fn start_authorization(
     spec: &ProviderSpec,
     id: Ident<'_>,
     scopes: &[String],
+    instance_json: Option<&str>,
 ) -> Result<Authorization, Error> {
     if spec.auth_type != AuthType::OAuth2 {
         return Err(Error::BadProvider);
@@ -150,6 +155,12 @@ pub async fn start_authorization(
     if !tenant_exists(pool, id.tenant_id).await? {
         return Err(Error::UnknownTenant);
     }
+
+    // For tenant-scoped providers, validate the caller's instance and resolve the templated
+    // authorize URL now; the normalized instance JSON is stored on the flow so the callback
+    // (and later refreshes) reconstruct the same per-customer endpoints.
+    let (spec_cow, instance_store) = crate::providers::resolve_instance(spec, instance_json)?;
+    let spec = spec_cow.as_ref();
 
     let now = OffsetDateTime::now_utc();
     let nonce = nonce();
@@ -173,8 +184,8 @@ pub async fn start_authorization(
     let expires_at = now + Duration::seconds(cfg.state_ttl_seconds);
     sqlx::query(
         "INSERT INTO oauth_flows \
-         (nonce, provider, tenant_id, external_user_id, account_key, pkce_verifier, expires_at) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7)",
+         (nonce, provider, tenant_id, external_user_id, account_key, pkce_verifier, expires_at, instance) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
     )
     .bind(&nonce)
     .bind(&spec.id)
@@ -183,6 +194,7 @@ pub async fn start_authorization(
     .bind(id.account_key)
     .bind(enc_verifier)
     .bind(expires_at)
+    .bind(&instance_store)
     .execute(pool)
     .await?;
 
@@ -225,6 +237,11 @@ pub async fn complete_authorization(
     let client_id = spec.client_id().ok_or(Error::NotConfigured)?;
     let client_secret = spec.client_secret().ok_or(Error::NotConfigured)?;
 
+    // Reconstruct the per-customer endpoints from the instance stored at authorize time
+    // (re-validated, since it determines where the secret + code are POSTed).
+    let (spec_cow, _) = crate::providers::resolve_instance(spec, flow.instance.as_deref())?;
+    let spec = spec_cow.as_ref();
+
     // Recover the per-flow PKCE verifier from storage (identity-bound AAD).
     let pkce_verifier = match &flow.pkce_verifier {
         Some(enc) => {
@@ -259,6 +276,7 @@ pub async fn complete_authorization(
         &flow.external_user_id,
         &flow.account_key,
         result,
+        flow.instance,
     )
     .await
 }
@@ -274,7 +292,7 @@ async fn claim_flow(
     let row = sqlx::query_as::<_, ClaimedFlow>(&format!(
         "UPDATE oauth_flows SET consumed_at = {NOW} \
          WHERE nonce = $1 AND consumed_at IS NULL AND expires_at > $2 \
-         RETURNING tenant_id, external_user_id, account_key, pkce_verifier"
+         RETURNING tenant_id, external_user_id, account_key, pkce_verifier, instance"
     ))
     .bind(nonce)
     .bind(now)
@@ -314,8 +332,8 @@ pub async fn store_api_key(
     let row = sqlx::query_as::<_, Connection>(&format!(
         "INSERT INTO connections \
          (id, tenant_id, provider, external_user_id, account_key, enc_access_token, \
-          enc_refresh_token, token_type, scopes, expires_at, status, refresh_attempts) \
-         VALUES ($1,$2,$3,$4,$5,$6,NULL,'ApiKey','',NULL,'active',0) \
+          enc_refresh_token, token_type, scopes, expires_at, status, refresh_attempts, instance) \
+         VALUES ($1,$2,$3,$4,$5,$6,NULL,'ApiKey','',NULL,'active',0,NULL) \
          ON CONFLICT (tenant_id, provider, external_user_id, account_key) DO UPDATE SET \
            enc_access_token = EXCLUDED.enc_access_token, enc_refresh_token = NULL, \
            token_type = 'ApiKey', expires_at = NULL, status = 'active', \
@@ -333,6 +351,7 @@ pub async fn store_api_key(
     Ok(row)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn upsert_from_token(
     pool: &Pool,
     keyring: &Keyring,
@@ -341,6 +360,7 @@ async fn upsert_from_token(
     external_user_id: &str,
     account_key: &str,
     result: TokenResult,
+    instance: Option<String>,
 ) -> Result<Connection, Error> {
     let aad = aad_for(tenant_id, &spec.id, external_user_id, account_key);
     let enc_access = keyring.encrypt(&result.access_token, &aad)?;
@@ -361,14 +381,14 @@ async fn upsert_from_token(
     let row = sqlx::query_as::<_, Connection>(&format!(
         "INSERT INTO connections \
          (id, tenant_id, provider, external_user_id, account_key, enc_access_token, \
-          enc_refresh_token, token_type, scopes, expires_at, status, refresh_attempts) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7,'Bearer',$8,$9,'active',0) \
+          enc_refresh_token, token_type, scopes, expires_at, status, refresh_attempts, instance) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,'Bearer',$8,$9,'active',0,$10) \
          ON CONFLICT (tenant_id, provider, external_user_id, account_key) DO UPDATE SET \
            enc_access_token = EXCLUDED.enc_access_token, \
            enc_refresh_token = COALESCE(EXCLUDED.enc_refresh_token, connections.enc_refresh_token), \
            token_type = EXCLUDED.token_type, scopes = EXCLUDED.scopes, \
            expires_at = EXCLUDED.expires_at, status = 'active', refresh_attempts = 0, \
-           last_error = NULL, updated_at = {NOW} \
+           last_error = NULL, instance = EXCLUDED.instance, updated_at = {NOW} \
          RETURNING {COLS}"
     ))
     .bind(id)
@@ -380,6 +400,7 @@ async fn upsert_from_token(
     .bind(enc_refresh)
     .bind(scopes)
     .bind(expires_at)
+    .bind(instance)
     .fetch_one(pool)
     .await?;
     Ok(row)
@@ -426,6 +447,7 @@ pub async fn get_access_token(
         token_type: conn.token_type.clone(),
         expires_at: conn.expires_at,
         scopes: conn.scopes_vec(),
+        instance: conn.instance.clone(),
     })
 }
 
@@ -455,6 +477,10 @@ async fn refresh_locked(
         conn.last_error = Some("no refresh token on file".to_string());
         return persist_refresh(tx, conn).await;
     };
+    // Reconstruct the per-customer token endpoint for tenant-scoped providers from the
+    // instance stored on the connection (no-op for ordinary providers).
+    let (spec_cow, _) = crate::providers::resolve_instance(spec, conn.instance.as_deref())?;
+    let spec = spec_cow.as_ref();
     let aad = conn.aad();
     let refresh_token = keyring.decrypt(&enc_rt, &aad)?;
     let client_id = spec.client_id().ok_or(Error::NotConfigured)?;
@@ -676,15 +702,24 @@ pub async fn disconnect(
         return Ok(false);
     };
     if let Some(spec) = crate::providers::get(&conn.provider) {
-        if spec.auth_type == AuthType::OAuth2 {
-            if let (Some(client_id), Some(client_secret)) = (spec.client_id(), spec.client_secret())
-            {
-                let aad = conn.aad();
-                if let Ok(access) = keyring.decrypt(&conn.enc_access_token, &aad) {
-                    if let Err(f) =
-                        oauth::revoke(transport, spec, &client_id, &client_secret, &access).await
-                    {
-                        tracing::warn!(id = %conn.id, message = %f.message, "upstream revoke failed; deleting locally anyway");
+        // Resolve the per-customer revoke endpoint for tenant-scoped providers; if the
+        // stored instance is missing/invalid, skip the upstream revoke and still delete.
+        if let Ok((spec_cow, _)) =
+            crate::providers::resolve_instance(spec, conn.instance.as_deref())
+        {
+            let spec = spec_cow.as_ref();
+            if spec.auth_type == AuthType::OAuth2 {
+                if let (Some(client_id), Some(client_secret)) =
+                    (spec.client_id(), spec.client_secret())
+                {
+                    let aad = conn.aad();
+                    if let Ok(access) = keyring.decrypt(&conn.enc_access_token, &aad) {
+                        if let Err(f) =
+                            oauth::revoke(transport, spec, &client_id, &client_secret, &access)
+                                .await
+                        {
+                            tracing::warn!(id = %conn.id, message = %f.message, "upstream revoke failed; deleting locally anyway");
+                        }
                     }
                 }
             }

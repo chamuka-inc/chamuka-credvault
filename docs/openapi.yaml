@@ -236,6 +236,20 @@ paths:
           schema:
             type: boolean
             default: false
+        - name: instance
+          in: query
+          required: false
+          description: |
+            **Tenant-scoped (instance) providers only.** A JSON object naming the provider's
+            per-customer template variables, e.g. `{"host":"wd2-impl-services1.workday.com",
+            "tenant":"acme"}`, which are substituted into the provider's authorize/token URLs
+            (and, downstream, its API base). **Required** for an instance provider; ignored by
+            ordinary global providers. The resolved host must match one of the provider's
+            allowed host suffixes (a value outside the allowlist is a `validation` 400). The
+            instance is stored on the connection and returned by the credentials endpoint.
+          schema:
+            type: string
+            example: '{"host":"wd2-impl-services1.workday.com","tenant":"acme"}'
       responses:
         "200":
           description: Authorization URL to send the end user to.
@@ -260,7 +274,9 @@ paths:
                 format: uri
         "400":
           description: |
-            Validation error (`validation`, e.g. missing/invalid `external_user_id`), or the
+            Validation error (`validation`): a missing/invalid `external_user_id`; or, for a
+            tenant-scoped provider, a missing `instance`, one missing a required variable, or a
+            resolved host outside the provider's allowed suffixes. Also returned when the
             provider is not an OAuth provider (`bad_provider` — use the api-key flow instead).
           $ref: "#/components/responses/Error"
         "401":
@@ -640,11 +656,20 @@ components:
           type: array
           items:
             type: string
+        instance:
+          type: [object, "null"]
+          additionalProperties:
+            type: string
+          description: |
+            For tenant-scoped (instance) providers, the connection's per-customer variables
+            (e.g. `{"host":"…","tenant":"…"}`) — supplied at connect time and echoed here so
+            the caller can build the provider's API base. `null`/absent for global providers.
       example:
         access_token: gho_…
         token_type: Bearer
         expires_at: "2026-06-05T18:30:00Z"
         scopes: ["repo", "read:user"]
+        instance: null
 
     PublicConnection:
       type: object

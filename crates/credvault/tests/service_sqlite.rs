@@ -114,6 +114,7 @@ async fn full_lifecycle_sqlite() {
             account_key: "default",
         },
         &[],
+        None,
     )
     .await
     .expect("start");
@@ -269,6 +270,7 @@ async fn pkce_connect_then_disconnect_revokes_upstream() {
             account_key: "default",
         },
         &[],
+        None,
     )
     .await
     .expect("start");

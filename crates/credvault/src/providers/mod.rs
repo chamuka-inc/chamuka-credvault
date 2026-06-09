@@ -11,11 +11,14 @@
 //! token path, refresh rotation), not branches — so adding an integration is a new file,
 //! never a code change.
 
+use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 use anyhow::Context;
 
 use crate::crypto::secret::{secret, SecretString};
+use crate::error::Error;
 
 /// Directories searched for provider plugin manifests, colon-separated like `PATH`.
 /// Unset/empty means the vault loads zero providers (a lean core); the container image
@@ -89,6 +92,21 @@ pub struct ProviderSpec {
     /// Drive the authorization-code flow with PKCE (RFC 7636, S256). Required by some
     /// providers (e.g. X/Twitter); harmless defense-in-depth elsewhere.
     pub uses_pkce: bool,
+
+    /// Template variables that make this a **tenant-scoped (instance) provider** — one
+    /// whose authorize/token (and revoke) URLs embed a per-customer host/tenant, supplied
+    /// per connection rather than fixed per deployment (e.g. Workday). When non-empty, the
+    /// `authorize_url`/`token_url`/`revoke_url` are templates containing `{var}` placeholders
+    /// drawn from this list, the connect call must carry an `instance` JSON object naming
+    /// every one of them, and the resolved URLs are SSRF- and allowlist-validated at use
+    /// time (the host is caller-supplied). Empty ⇒ an ordinary global provider (unchanged).
+    pub instance_vars: Vec<String>,
+
+    /// Allowed host suffixes for an instance provider's resolved endpoints, e.g.
+    /// `[".workday.com"]`. **Required** when `instance_vars` is non-empty: it constrains the
+    /// caller-supplied host so a tenant cannot point credvault at an arbitrary origin and
+    /// exfiltrate the deployment's OAuth client secret. Each suffix must begin with `.`.
+    pub instance_host_suffixes: Vec<String>,
 }
 
 impl Default for ProviderSpec {
@@ -113,6 +131,8 @@ impl Default for ProviderSpec {
             expires_in_path: "expires_in".to_string(),
             refresh_token_rotates: false,
             uses_pkce: false,
+            instance_vars: Vec::new(),
+            instance_host_suffixes: Vec::new(),
         }
     }
 }
@@ -146,6 +166,112 @@ impl ProviderSpec {
             AuthType::OAuth2 => self.client_id().is_some() && self.client_secret().is_some(),
         }
     }
+    /// Whether this provider's URLs are templated per connection (tenant-scoped).
+    pub fn is_instance_scoped(&self) -> bool {
+        !self.instance_vars.is_empty()
+    }
+}
+
+/// Extract `{name}` placeholders from a URL template, in order of appearance.
+fn template_vars(template: &str) -> Vec<String> {
+    let mut vars = Vec::new();
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('}') else { break };
+        vars.push(after[..close].to_string());
+        rest = &after[close + 1..];
+    }
+    vars
+}
+
+/// Substitute `{var}` placeholders in a template with the connection's instance values.
+fn render_template(template: &str, instance: &BTreeMap<String, String>) -> String {
+    let mut out = template.to_string();
+    for (k, v) in instance {
+        out = out.replace(&format!("{{{k}}}"), v);
+    }
+    out
+}
+
+/// SSRF- and allowlist-validate a *resolved* instance endpoint. The host comes from the
+/// caller's `instance`, so this runs at use time (connect/refresh/revoke), not just at
+/// manifest load: it enforces https + non-internal IP (shared with the static path) and
+/// then requires the host to match one of the provider's `instance_host_suffixes` — so a
+/// tenant cannot redirect the deployment's client secret to an arbitrary origin.
+fn validate_resolved_endpoint(spec: &ProviderSpec, field: &str, url: &str) -> Result<(), Error> {
+    if url.contains('{') {
+        return Err(Error::Validation(format!(
+            "{field} has unresolved placeholders"
+        )));
+    }
+    validate_endpoint(&spec.id, field, url).map_err(|e| {
+        tracing::warn!(provider = %spec.id, field, error = %e, "resolved instance endpoint rejected");
+        Error::Validation(format!("instance produced an invalid {field}"))
+    })?;
+    let host = reqwest::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+        .ok_or_else(|| Error::Validation(format!("{field} has no host")))?;
+    let allowed = spec
+        .instance_host_suffixes
+        .iter()
+        .any(|suf| host.ends_with(&suf.to_ascii_lowercase()));
+    if !allowed {
+        return Err(Error::Validation(format!(
+            "instance host '{host}' is not permitted for provider '{}'",
+            spec.id
+        )));
+    }
+    Ok(())
+}
+
+/// Resolve a provider spec for one connection's instance: substitute the `instance` values
+/// into the templated URLs and validate the result. Returns the spec to drive the OAuth
+/// engine with (borrowed unchanged for ordinary providers; an owned, URL-substituted clone
+/// for instance providers) plus the normalized instance JSON to persist (or `None`).
+///
+/// `instance_json` is the JSON object supplied at connect time (and stored thereafter). For
+/// an instance provider it must name exactly the declared `instance_vars`; for an ordinary
+/// provider it is ignored.
+pub fn resolve_instance<'a>(
+    spec: &'a ProviderSpec,
+    instance_json: Option<&str>,
+) -> Result<(Cow<'a, ProviderSpec>, Option<String>), Error> {
+    if !spec.is_instance_scoped() {
+        return Ok((Cow::Borrowed(spec), None));
+    }
+    let raw = instance_json
+        .ok_or_else(|| Error::Validation(format!("provider '{}' requires an instance", spec.id)))?;
+    let map: BTreeMap<String, String> = serde_json::from_str(raw)
+        .map_err(|_| Error::Validation("instance must be a JSON object of strings".into()))?;
+    if map.len() != spec.instance_vars.len() {
+        return Err(Error::Validation("instance has unexpected keys".into()));
+    }
+    for var in &spec.instance_vars {
+        let val = map
+            .get(var)
+            .ok_or_else(|| Error::Validation(format!("instance is missing '{var}'")))?;
+        if val.is_empty() || val.len() > 255 {
+            return Err(Error::Validation(format!(
+                "instance '{var}' must be 1..=255 chars"
+            )));
+        }
+    }
+
+    let mut resolved = spec.clone();
+    resolved.authorize_url = render_template(&spec.authorize_url, &map);
+    resolved.token_url = render_template(&spec.token_url, &map);
+    resolved.revoke_url = spec.revoke_url.as_ref().map(|u| render_template(u, &map));
+
+    validate_resolved_endpoint(spec, "authorize_url", &resolved.authorize_url)?;
+    validate_resolved_endpoint(spec, "token_url", &resolved.token_url)?;
+    if let Some(rev) = resolved.revoke_url.as_deref().filter(|u| !u.is_empty()) {
+        validate_resolved_endpoint(spec, "revoke_url", rev)?;
+    }
+
+    let normalized = serde_json::to_string(&map).map_err(|_| Error::Internal)?;
+    Ok((Cow::Owned(resolved), Some(normalized)))
 }
 
 static REGISTRY: OnceLock<Vec<ProviderSpec>> = OnceLock::new();
@@ -285,14 +411,63 @@ fn validate_spec(s: &ProviderSpec) -> anyhow::Result<()> {
             "provider '{}' (oauth2) is missing client_id_env/client_secret_env",
             s.id
         );
-        // Every endpoint the service will POST credentials to must be TLS and must not
-        // point at an internal/metadata address (SSRF). A misconfigured or hostile
-        // provider entry could otherwise exfiltrate the client secret + tokens, or pivot
-        // to e.g. 169.254.169.254.
-        validate_endpoint(&s.id, "authorize_url", &s.authorize_url)?;
-        validate_endpoint(&s.id, "token_url", &s.token_url)?;
-        if let Some(revoke) = s.revoke_url.as_deref().filter(|u| !u.is_empty()) {
-            validate_endpoint(&s.id, "revoke_url", revoke)?;
+        if s.is_instance_scoped() {
+            // The URLs are templates — their host is filled in per connection, so the
+            // SSRF/allowlist check happens at use time (see `validate_resolved_endpoint`).
+            // Here we validate only what's knowable statically: a required host allowlist,
+            // an https scheme, and that every `{placeholder}` is a declared instance var.
+            validate_instance_templates(s)?;
+        } else {
+            // Every endpoint the service will POST credentials to must be TLS and must not
+            // point at an internal/metadata address (SSRF). A misconfigured or hostile
+            // provider entry could otherwise exfiltrate the client secret + tokens, or pivot
+            // to e.g. 169.254.169.254.
+            validate_endpoint(&s.id, "authorize_url", &s.authorize_url)?;
+            validate_endpoint(&s.id, "token_url", &s.token_url)?;
+            if let Some(revoke) = s.revoke_url.as_deref().filter(|u| !u.is_empty()) {
+                validate_endpoint(&s.id, "revoke_url", revoke)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Static checks for an instance (tenant-scoped) provider's templated URLs. The resolved
+/// host is unknown until connect time, so the SSRF/allowlist enforcement lives in
+/// [`validate_resolved_endpoint`]; this guards the manifest itself.
+fn validate_instance_templates(s: &ProviderSpec) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !s.instance_host_suffixes.is_empty(),
+        "provider '{}' is instance-scoped (instance_vars set) but declares no \
+         instance_host_suffixes; one is required to constrain the caller-supplied host",
+        s.id
+    );
+    for suf in &s.instance_host_suffixes {
+        anyhow::ensure!(
+            suf.starts_with('.'),
+            "provider '{}' instance_host_suffix '{suf}' must start with '.' (e.g. .workday.com)",
+            s.id
+        );
+    }
+    let mut endpoints = vec![
+        ("authorize_url", s.authorize_url.as_str()),
+        ("token_url", s.token_url.as_str()),
+    ];
+    if let Some(rev) = s.revoke_url.as_deref().filter(|u| !u.is_empty()) {
+        endpoints.push(("revoke_url", rev));
+    }
+    for (field, url) in endpoints {
+        anyhow::ensure!(
+            url.starts_with("https://"),
+            "provider '{}' {field} must be https (instance endpoints cannot be loopback): {url}",
+            s.id
+        );
+        for var in template_vars(url) {
+            anyhow::ensure!(
+                s.instance_vars.contains(&var),
+                "provider '{}' {field} references undeclared instance var '{{{var}}}'",
+                s.id
+            );
         }
     }
     Ok(())
@@ -499,5 +674,91 @@ mod tests {
 
         std::env::remove_var(KEY);
         let _ = std::fs::remove_file(&path);
+    }
+
+    // ----- instance (tenant-scoped) providers -------------------------------- //
+    fn instance_spec() -> ProviderSpec {
+        ProviderSpec {
+            id: "workday".into(),
+            auth_type: AuthType::OAuth2,
+            authorize_url: "https://{host}/ccx/oauth2/{tenant}/authorize".into(),
+            token_url: "https://{host}/ccx/oauth2/{tenant}/token".into(),
+            client_id_env: "WD_ID".into(),
+            client_secret_env: "WD_SECRET".into(),
+            instance_vars: vec!["host".into(), "tenant".into()],
+            instance_host_suffixes: vec![".workday.com".into()],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn instance_manifest_validates() {
+        assert!(validate_spec(&instance_spec()).is_ok());
+    }
+
+    #[test]
+    fn instance_manifest_requires_host_suffixes() {
+        let mut s = instance_spec();
+        s.instance_host_suffixes.clear();
+        assert!(validate_spec(&s).is_err());
+    }
+
+    #[test]
+    fn instance_manifest_rejects_undeclared_placeholder() {
+        let mut s = instance_spec();
+        s.token_url = "https://{host}/ccx/oauth2/{bogus}/token".into();
+        assert!(validate_spec(&s).is_err());
+    }
+
+    #[test]
+    fn instance_manifest_suffix_needs_leading_dot() {
+        let mut s = instance_spec();
+        s.instance_host_suffixes = vec!["workday.com".into()];
+        assert!(validate_spec(&s).is_err());
+    }
+
+    #[test]
+    fn resolve_instance_templates_urls() {
+        let s = instance_spec();
+        let inst = r#"{"host":"wd2-impl-services1.workday.com","tenant":"acme"}"#;
+        let (resolved, normalized) = resolve_instance(&s, Some(inst)).expect("resolve");
+        assert_eq!(
+            resolved.token_url,
+            "https://wd2-impl-services1.workday.com/ccx/oauth2/acme/token"
+        );
+        assert_eq!(
+            resolved.authorize_url,
+            "https://wd2-impl-services1.workday.com/ccx/oauth2/acme/authorize"
+        );
+        assert!(normalized.is_some());
+    }
+
+    #[test]
+    fn resolve_instance_enforces_host_allowlist() {
+        let s = instance_spec();
+        // A foreign host would exfiltrate the deployment's client secret — refused.
+        assert!(resolve_instance(&s, Some(r#"{"host":"evil.com","tenant":"a"}"#)).is_err());
+        // ".workday.com" must not match a look-alike like "evilworkday.com".
+        assert!(resolve_instance(&s, Some(r#"{"host":"evilworkday.com","tenant":"a"}"#)).is_err());
+        // …and certainly not the cloud-metadata address.
+        assert!(resolve_instance(&s, Some(r#"{"host":"169.254.169.254","tenant":"a"}"#)).is_err());
+    }
+
+    #[test]
+    fn resolve_instance_requires_exact_vars() {
+        let s = instance_spec();
+        assert!(resolve_instance(&s, None).is_err());
+        assert!(resolve_instance(&s, Some(r#"{"host":"x.workday.com"}"#)).is_err()); // missing tenant
+        assert!(
+            resolve_instance(&s, Some(r#"{"host":"x.workday.com","tenant":"a","x":"y"}"#)).is_err()
+        ); // extra key
+    }
+
+    #[test]
+    fn resolve_instance_is_noop_for_global_provider() {
+        let s = oauth_spec("https://idp.example.com/a", "https://idp.example.com/t");
+        let (resolved, normalized) = resolve_instance(&s, None).expect("resolve");
+        assert!(matches!(resolved, std::borrow::Cow::Borrowed(_)));
+        assert!(normalized.is_none());
     }
 }
