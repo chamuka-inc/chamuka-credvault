@@ -25,6 +25,7 @@ fn default_plugins_parse_validate_and_keep_quirks() {
         "microsoft",
         "zoom",
         "sendgrid",
+        "workday",
     ] {
         assert!(
             ids.contains(&expected),
@@ -63,4 +64,9 @@ fn default_plugins_parse_validate_and_keep_quirks() {
     assert!(by("microsoft").uses_pkce);
     assert_eq!(by("zoom").token_auth_style, TokenAuthStyle::Basic);
     assert!(by("zoom").refresh_token_rotates);
+
+    let workday = by("workday");
+    assert!(workday.is_instance_scoped());
+    assert_eq!(workday.instance_vars, ["host", "tenant"]);
+    assert_eq!(workday.instance_host_suffixes, [".workday.com"]);
 }

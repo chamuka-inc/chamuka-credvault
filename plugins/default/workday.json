@@ -1,0 +1,13 @@
+{
+  "manifest_version": 1,
+  "id": "workday",
+  "version": "1.0.0",
+  "auth_type": "oauth2",
+  "authorize_url": "https://{host}/ccx/oauth2/{tenant}/authorize",
+  "token_url": "https://{host}/ccx/oauth2/{tenant}/token",
+  "revoke_url": "https://{host}/ccx/oauth2/{tenant}/revoke",
+  "client_id_env": "WORKDAY_CLIENT_ID",
+  "client_secret_env": "WORKDAY_CLIENT_SECRET",
+  "instance_vars": ["host", "tenant"],
+  "instance_host_suffixes": [".workday.com"]
+}
