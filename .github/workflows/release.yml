@@ -31,7 +31,7 @@ jobs:
   verify-version:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: tag matches Cargo.toml version
         run: |
           tag="${GITHUB_REF_NAME#v}"
@@ -66,7 +66,7 @@ jobs:
       VAULT_DATABASE_URL: postgres://vault:vault@localhost:5432/vault
       DATABASE_URL: postgres://vault:vault@localhost:5432/vault
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -81,7 +81,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: cargo publish
@@ -98,7 +98,7 @@ jobs:
       packages: write # push image + attestations to GHCR
       security-events: write # upload the Trivy SARIF to the Security tab
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: container metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -169,7 +169,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: extract changelog section for this version
         id: notes
         run: |
@@ -200,7 +200,7 @@ jobs:
           - target: aarch64-unknown-linux-musl
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       # Cross-compiles via `cross`, archives the binaries, generates SHA-256
       # checksums, and uploads everything to the release for this tag.
