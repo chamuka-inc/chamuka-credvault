@@ -145,7 +145,7 @@ jobs:
           category: trivy-image
 
       - name: log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4.5.2
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
