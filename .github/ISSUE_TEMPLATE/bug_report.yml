@@ -7,7 +7,7 @@ body:
       value: |
         Thanks for taking the time to file a bug. **Do not report security
         vulnerabilities here** — follow the private process in
-        [SECURITY.md](https://github.com/chamuka-inc/credvault/blob/main/SECURITY.md).
+        [SECURITY.md](https://github.com/chamuka-labs/credvault/blob/main/SECURITY.md).
 
         Never paste real tokens, API keys, or credentials into this issue.
   - type: textarea

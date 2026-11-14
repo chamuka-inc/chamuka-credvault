@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/chamuka-inc/credvault/plugins/manifest.schema.json",
+  "$id": "https://github.com/chamuka-labs/credvault/plugins/manifest.schema.json",
   "title": "credvault provider plugin manifest",
   "description": "One JSON file per provider. Mirrors the ProviderSpec fields plus packaging metadata. The loader uses `deny_unknown_fields`, so any key not listed here is a hard error. Secrets never appear here — only the names of the env vars credentials are read from.",
   "type": "object",

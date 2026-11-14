@@ -12,8 +12,8 @@ edition = "2021"
 rust-version = "1.96"
 authors = ["Chamuka, Inc. <security@chamuka.ai>"]
 license = "Apache-2.0"
-repository = "https://github.com/chamuka-inc/credvault"
-homepage = "https://github.com/chamuka-inc/credvault"
+repository = "https://github.com/chamuka-labs/credvault"
+homepage = "https://github.com/chamuka-labs/credvault"
 
 # Shared dependency versions. Each crate opts in with `<dep>.workspace = true` and may
 # add crate-specific features on top. One place to bump a version for the whole tree.
