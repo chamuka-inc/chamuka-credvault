@@ -23,7 +23,7 @@ Instead, report privately through one of:
    ["Report a vulnerability"](https://github.com/chamuka-inc/credvault/security/advisories/new)
    button on the repository's *Security* tab. This keeps the report private and lets us
    collaborate on a fix and a CVE in one place.
-2. **Email** — `security@chamuka.io` (or `swiftugandan@gmail.com` if that bounces).
+2. **Email** — `security@chamuka.ai`.
    Encrypt sensitive details if you can.
 
 Please include:
