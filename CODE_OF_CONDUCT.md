@@ -19,10 +19,11 @@ project.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported
-privately to the project maintainers at **conduct@chamuka.io** (or
-`swiftugandan@gmail.com` if that bounces). All complaints will be reviewed and
-investigated promptly and fairly. Maintainers are obligated to respect the privacy and
-security of the reporter of any incident.
+privately to the project maintainers at **conduct@chamuka.io**.
+TODO: confirm this public contact, and replace this note once Swift chooses the final
+address. A personal mailbox fallback was removed pending that choice.
+All complaints will be reviewed and investigated promptly and fairly. Maintainers are
+obligated to respect the privacy and security of the reporter of any incident.
 
 Maintainers will follow the Contributor Covenant's
 [Enforcement Guidelines](https://www.contributor-covenant.org/version/2/1/code_of_conduct/#enforcement-guidelines)
