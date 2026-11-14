@@ -45,7 +45,7 @@ info:
     identifier: Apache-2.0
   contact:
     name: credvault
-    url: https://github.com/chamuka-inc/credvault
+    url: https://github.com/chamuka-labs/credvault
 
 servers:
   - url: http://localhost:8000

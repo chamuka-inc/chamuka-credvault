@@ -62,5 +62,5 @@ Initial public release.
 - Documentation: `README.md`, `DEPLOYMENT.md` (production hardening), `SECURITY.md`,
   `CONTRIBUTING.md`, and `CODE_OF_CONDUCT.md`.
 
-[Unreleased]: https://github.com/chamuka-inc/credvault/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/chamuka-inc/credvault/releases/tag/v1.0.0
+[Unreleased]: https://github.com/chamuka-labs/credvault/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/chamuka-labs/credvault/releases/tag/v1.0.0

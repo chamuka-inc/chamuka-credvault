@@ -1,6 +1,6 @@
 # Chamuka CredVault
 
-[![CI](https://github.com/chamuka-inc/chamuka-credvault/actions/workflows/ci.yml/badge.svg)](https://github.com/chamuka-inc/chamuka-credvault/actions/workflows/ci.yml)
+[![CI](https://github.com/chamuka-labs/chamuka-credvault/actions/workflows/ci.yml/badge.svg)](https://github.com/chamuka-labs/chamuka-credvault/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/credvault.svg)](https://crates.io/crates/credvault)
 [![Documentation](https://docs.rs/credvault/badge.svg)](https://docs.rs/credvault)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)

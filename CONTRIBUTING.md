@@ -24,7 +24,7 @@ toolchain is pinned in `rust-toolchain.toml`, so rustup installs the right one o
 build. credvault is a Cargo **workspace** — run all commands from the repo root.
 
 ```bash
-git clone https://github.com/chamuka-inc/credvault
+git clone https://github.com/chamuka-labs/credvault
 cd credvault
 
 cargo build --workspace               # default (Postgres) build of both crates

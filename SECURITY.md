@@ -20,7 +20,7 @@ minor version. Until a `2.0` line exists, the `1.x` series is the supported line
 Instead, report privately through one of:
 
 1. **GitHub Security Advisories** (preferred) — use the
-   ["Report a vulnerability"](https://github.com/chamuka-inc/credvault/security/advisories/new)
+   ["Report a vulnerability"](https://github.com/chamuka-labs/credvault/security/advisories/new)
    button on the repository's *Security* tab. This keeps the report private and lets us
    collaborate on a fix and a CVE in one place.
 2. **Email** — `security@chamuka.ai`.
