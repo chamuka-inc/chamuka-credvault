@@ -1,12 +1,14 @@
-# credvault
+# Chamuka CredVault
 
-[![CI](https://github.com/chamuka-inc/credvault/actions/workflows/ci.yml/badge.svg)](https://github.com/chamuka-inc/credvault/actions/workflows/ci.yml)
+[![CI](https://github.com/chamuka-inc/chamuka-credvault/actions/workflows/ci.yml/badge.svg)](https://github.com/chamuka-inc/chamuka-credvault/actions/workflows/ci.yml)
 [![Crates.io](https://img.shields.io/crates/v/credvault.svg)](https://crates.io/crates/credvault)
 [![Documentation](https://docs.rs/credvault/badge.svg)](https://docs.rs/credvault)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![MSRV](https://img.shields.io/badge/rustc-1.96+-orange.svg)](https://blog.rust-lang.org/)
 
-A multi-tenant, multi-provider **credential vault** — the load-bearing layer of an
+Multi-tenant credential vault for AI agent integrations.
+
+A multi-tenant, multi-provider **credential vault**, the load-bearing layer of an
 integration platform. It stores per-end-user OAuth tokens and API keys for many
 providers, encrypts them at rest, and keeps them alive across expiry, rotation, and
 revocation so that a caller can ask for "a valid access token for user U at provider P"
@@ -362,6 +364,10 @@ how to report a vulnerability privately.
 
 Please review the [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
 
+## Security
+
+Report vulnerabilities to [security@chamuka.ai](mailto:security@chamuka.ai). See [SECURITY.md](SECURITY.md).
+
 ## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
@@ -369,3 +375,7 @@ Licensed under the [Apache License, Version 2.0](LICENSE).
 Unless you explicitly state otherwise, any contribution intentionally submitted for
 inclusion in this work by you, as defined in the Apache-2.0 license, shall be licensed as
 above, without any additional terms or conditions.
+
+---
+
+Part of [Chamuka Labs](https://chamuka.ai), an applied AI lab.
