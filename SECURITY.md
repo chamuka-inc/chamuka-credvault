@@ -23,9 +23,7 @@ Instead, report privately through one of:
    ["Report a vulnerability"](https://github.com/chamuka-inc/credvault/security/advisories/new)
    button on the repository's *Security* tab. This keeps the report private and lets us
    collaborate on a fix and a CVE in one place.
-2. **Email** — `security@chamuka.io`.
-   TODO: confirm this public contact, and replace this note once Swift chooses the final
-   address. A personal mailbox fallback was removed pending that choice.
+2. **Email** — `security@chamuka.ai`.
    Encrypt sensitive details if you can.
 
 Please include:

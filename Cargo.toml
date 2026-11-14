@@ -10,8 +10,7 @@ members = [
 version = "1.0.0"
 edition = "2021"
 rust-version = "1.96"
-# TODO: add a public contact address once Swift chooses one. A personal mailbox was removed.
-authors = ["Chamuka, Inc."]
+authors = ["Chamuka, Inc. <security@chamuka.ai>"]
 license = "Apache-2.0"
 repository = "https://github.com/chamuka-inc/credvault"
 homepage = "https://github.com/chamuka-inc/credvault"

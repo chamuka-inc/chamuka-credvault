@@ -19,9 +19,7 @@ project.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported
-privately to the project maintainers at **conduct@chamuka.io**.
-TODO: confirm this public contact, and replace this note once Swift chooses the final
-address. A personal mailbox fallback was removed pending that choice.
+privately to the project maintainers at **security@chamuka.ai**.
 All complaints will be reviewed and investigated promptly and fairly. Maintainers are
 obligated to respect the privacy and security of the reporter of any incident.
 
